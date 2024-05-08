@@ -798,13 +798,13 @@ def create_buildings(self, context):
     add_buildings(builds, terrain, self.building_colors if self.one_color_buildings else None, self.building_type)
 
 def add_city(self, context):
-#    if self.include_birds:
-#        bpy.ops.import_scene.fbx(filepath=dirp+"\\bird.fbx")
-#        create_boids(self, context)
-#        clear_bird_fbx()
+    #if self.include_birds:
+    #    bpy.ops.import_scene.fbx(filepath=dirp+"\\bird.fbx")
+    #    create_boids(self, context)
+    #    clear_bird_fbx()
         
-#    if self.include_clouds:
-#        create_clouds(self, context)
+    #if self.include_clouds:
+    #    create_clouds(self, context)
         
     create_terrain(self, context)
     
@@ -832,135 +832,9 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
         min=0,
     )
     
-    # TERRAIN AND BUILDINGS
-    
-    height_scale: FloatProperty(
-        name='Height Scale',
-        description='Vertical scale of the terrain',
-        default=50.0,
-        soft_min=1.0,
-        soft_max=200.0,
-    )
-    
-    size: IntProperty(
-        name='Size',
-        description='Number of terrain cells generated',
-        default=400,
-        soft_min=50,
-        soft_max=1000,
-    )
-    
-    horiz_scale : FloatProperty(
-        name='Horizontal Scale',
-        description='Scale (in flat area) of the generated buildings and terrain',
-        default=0.1,
-        soft_min=0.001,
-        soft_max=10.0,
-    )
-    
-    noise_scale : FloatProperty(
-        name='Noise Scale',
-        description='How clustered together noise features are on the terrain',
-        default=0.1,
-        soft_min=0.005,
-        soft_max=5.0,
-    )
-    
-    noise_persistence: FloatProperty(
-        name='Noise Persistence',
-        description='How persistent each consecutive layer of noise is',
-        default=0.4,
-        soft_min=0.005,
-        soft_max=1.0,
-    )
-    
-    noise_lacunarity: FloatProperty(
-        name='Noise Lacunarity',
-        description='How much denser each consecutive layer of noise is',
-        default=2.2,
-        soft_min=0.005,
-        soft_max=1.0,
-    )
-    
-    building_height : FloatProperty(
-        name='Building height',
-        description='How tall each building is',
-        default=1.0,
-        soft_min=0.05,
-        soft_max=4.0,
-    )
-    
-    building_height_variation : FloatProperty(
-        name='Building height variation',
-        description='How much the height of each building varies (as a \% of height)',
-        default=0.2,
-        soft_min=0.05,
-        soft_max=1.0,
-    )
-    
-    building_scale : FloatProperty(
-        name='Building scale',
-        description='How BIG each building is',
-        default=1.0,
-        soft_min=0.1,
-        soft_max=6.0,
-    )
-    
-    building_area_ratio: FloatProperty(
-        name='Building Area Ratio',
-        description='How much of each trangular "grid" cell each building takes up',
-        default=0.8,
-        soft_min=0.05,
-        soft_max=1.0,
-    )
-    
-    building_area_ratio_variation: FloatProperty(
-        name='Ratio variation',
-        description='How much the Building area ratio varies',
-        default=0.2,
-        soft_min=0.05,
-        soft_max=0.5,
-    )
-    
-    building_type: EnumProperty(
-        name='Building Type',
-        items=building_types,
-        default='0',
-    )
-    
-    one_color_buildings: BoolProperty(
-        name='One-color buildings',
-        description='Whether or not buildings should be one color',
-        default=False
-    )
-    
-    brick_ground: BoolProperty(
-        name='Brick ground',
-        description='Whether or not the ground should be painted with brick',
-        default=False
-    )
-    
-    brick_ground_threshold : FloatProperty(
-        name='Brick ground variation',
-        description='How much brick should there be',
-        default=0.6,
-        soft_min=0.01,
-        soft_max=5.0,
-    )
-    
-    building_colors: FloatVectorProperty(
-        name='Building color',
-        description='Color of buildings',
-        subtype="RGB",
-        default=(0.0, 0.0, 0.0)
-    )
-    
-    
-    ## BOIDS AND CLOUDS
-    
     scale: IntProperty(
         name='Scale',
-        description='Scale of bird',
+        description='Scale',
         default=10,
         soft_min=5,
         soft_max=20,
@@ -1100,6 +974,129 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
         name='Bird Type',
         items=bird_types,
         default='0',
+    )
+    
+    # TERRAIN AND BUILDINGS
+    
+    height_scale: FloatProperty(
+        name='Height Scale',
+        description='Vertical scale of the terrain',
+        default=50.0,
+        soft_min=1.0,
+        soft_max=200.0,
+    )
+    
+    size: IntProperty(
+        name='Size',
+        description='Number of terrain cells generated',
+        default=400,
+        soft_min=50,
+        soft_max=1000,
+    )
+    
+    horiz_scale: FloatProperty(
+        name='Horizontal Scale',
+        description='Scale (in flat area) of the generated buildings and terrain',
+        default=0.1,
+        soft_min=0.001,
+        soft_max=10.0,
+    )
+    
+    noise_scale: FloatProperty(
+        name='Noise Scale',
+        description='How clustered together noise features are on the terrain',
+        default=0.1,
+        soft_min=0.005,
+        soft_max=5.0,
+    )
+    
+    noise_persistence: FloatProperty(
+        name='Noise Persistence',
+        description='How persistent each consecutive layer of noise is',
+        default=0.4,
+        soft_min=0.005,
+        soft_max=1.0,
+    )
+    
+    noise_lacunarity: FloatProperty(
+        name='Noise Lacunarity',
+        description='How much denser each consecutive layer of noise is',
+        default=2.2,
+        soft_min=0.005,
+        soft_max=1.0,
+    )
+    
+    building_height: FloatProperty(
+        name='Building height',
+        description='How tall each building is',
+        default=1.0,
+        soft_min=0.05,
+        soft_max=4.0,
+    )
+    
+    building_height_variation: FloatProperty(
+        name='Building height variation',
+        description='How much the height of each building varies (as a \% of height)',
+        default=0.2,
+        soft_min=0.05,
+        soft_max=1.0,
+    )
+    
+    building_scale: FloatProperty(
+        name='Building scale',
+        description='How BIG each building is',
+        default=1.0,
+        soft_min=0.1,
+        soft_max=6.0,
+    )
+    
+    building_area_ratio: FloatProperty(
+        name='Building Area Ratio',
+        description='How much of each trangular "grid" cell each building takes up',
+        default=0.8,
+        soft_min=0.05,
+        soft_max=1.0,
+    )
+    
+    building_area_ratio_variation: FloatProperty(
+        name='Ratio variation',
+        description='How much the Building area ratio varies',
+        default=0.2,
+        soft_min=0.05,
+        soft_max=0.5,
+    )
+    
+    building_type: EnumProperty(
+        name='Building Type',
+        items=building_types,
+        default='0',
+    )
+    
+    one_color_buildings: BoolProperty(
+        name='One-color buildings',
+        description='Whether or not buildings should be one color',
+        default=False
+    )
+    
+    brick_ground: BoolProperty(
+        name='Brick ground',
+        description='Whether or not the ground should be painted with brick',
+        default=False
+    )
+    
+    brick_ground_threshold : FloatProperty(
+        name='Brick ground variation',
+        description='How much brick should there be',
+        default=0.6,
+        soft_min=0.01,
+        soft_max=5.0,
+    )
+    
+    building_colors: FloatVectorProperty(
+        name='Building color',
+        description='Color of buildings',
+        subtype="RGB",
+        default=(0.0, 0.0, 0.0),
     )
     
     
