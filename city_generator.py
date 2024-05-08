@@ -380,8 +380,8 @@ class Boid:
         self.think_timer = (self.think_timer + 1) % 5
         
     def wrap(self):
-        self.position[0] = (self.position[0] + self.scale) % (2*self.scale) - self.scale
-        self.position[1] = (self.position[1] + self.scale) % (2*self.scale) - self.scale
+        self.position[0] = self.position[0] % self.scale
+        self.position[1] = self.position[1] % self.scale
         self.position[2] = (self.position[2] - self.min_height) % (self.max_height - self.min_height) + self.min_height
         
     def getFlockmates(self, boids):
@@ -709,9 +709,11 @@ def create_clouds(self, context):
     # Set Seed
     random.seed(self.seed)
     
+    NEW_SCALE = self.scale / 10
+    
     # Create Metaballs + Mesh
     for i in range(self.cloudiness):
-        bpy.ops.object.metaball_add(radius=uniform(self.min_cloud_radius, self.max_cloud_radius), location=(uniform(-self.scale, self.scale), uniform(-self.scale, self.scale), uniform(self.cloud_height - self.cloud_depth/2, self.cloud_height + self.cloud_depth/2)))
+        bpy.ops.object.metaball_add(radius=uniform(self.min_cloud_radius, self.max_cloud_radius), location=(uniform(0, NEW_SCALE), uniform(0, NEW_SCALE), uniform(self.cloud_height - self.cloud_depth/2, self.cloud_height + self.cloud_depth/2)))
     
     bpy.ops.object.convert(target='MESH')
     cloud_mesh = bpy.context.object
@@ -742,17 +744,18 @@ def create_boids(self, context):
     bodies = []
     brains = []
     obstacles = []
-
+    
+    NEW_SCALE = self.scale / 10
     MAX_ACCELERATION = 0.5
     
     for i in range(self.num_boids):
-        p = np.array([uniform(-self.scale, self.scale), uniform(-self.scale, self.scale), uniform(self.min_bird_altitude, self.max_bird_altitude)])
+        p = np.array([uniform(0, NEW_SCALE), uniform(0, NEW_SCALE), uniform(self.min_bird_altitude, self.max_bird_altitude)])
         v = clamp_magnitude(np.array([uniform(-1, 1), uniform(-1, 1), uniform(-1, 1)]), self.max_speed / 2)
     
         b = initialize_body("Boid " + str(i+1), p, v, self.boid_size, self.bird_type)
     
         bodies.append(b)
-        brains.append(Boid(p, v, self.scale, self.min_bird_altitude, self.max_bird_altitude, self.friend_radius, self.avoid_radius, MAX_ACCELERATION, self.max_speed))
+        brains.append(Boid(p, v, NEW_SCALE, self.min_bird_altitude, self.max_bird_altitude, self.friend_radius, self.avoid_radius, MAX_ACCELERATION, self.max_speed))
         
         b.animation_data_create()
         b.animation_data.action = bpy.data.actions.new(name="Flight")
@@ -782,13 +785,13 @@ def create_terrain(self, context):
         return self.height_scale * fractal_noise(self.noise_scale * self.horiz_scale * location,
                                         self.noise_persistence, self.noise_lacunarity)
     
-    generate_terrain(self.size, self.horiz_scale, terrain, self.brick_ground, self.brick_ground_threshold)
+    generate_terrain(self.scale, self.horiz_scale, terrain, self.brick_ground, self.brick_ground_threshold)
     
     pass
 
 def create_buildings(self, context):
     
-    builds = get_buildings(self.size * self.horiz_scale, self.building_scale, self.building_height,
+    builds = get_buildings(self.scale * self.horiz_scale, self.building_scale, self.building_height,
             self.building_height_variation, self.building_area_ratio, self.building_area_ratio_variation)
     
     def terrain(location):
@@ -837,17 +840,16 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
     scale: IntProperty(
         name='Scale',
         description='Scale',
-        default=10,
-        soft_min=5,
-        soft_max=20,
+        default=400,
+        soft_min=50,
+        soft_max=1000,
     )
     
     cloudiness: IntProperty(
         name='Cloudiness',
         description='Cloudiness',
-        default=75,
+        default=100,
         min=1,
-        max=100,
     )
     
     min_cloud_radius: FloatProperty(
@@ -869,7 +871,7 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
     cloud_height: FloatProperty(
         name='Altitude',
         description='Altitude',
-        default=20,
+        default=15,
         soft_min=0,
         soft_max=100,
     )
@@ -907,9 +909,9 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
     num_boids: IntProperty(
         name='Number of Birds',
         description='Number of Birds',
-        default=50,
+        default=100,
         min=1,
-        soft_max=100,
+        soft_max=200,
     )
     
     boid_size: FloatProperty(
@@ -961,14 +963,14 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
     min_bird_altitude: FloatProperty(
         name='Min Altitude',
         description='Min Altitude',
-        default=5,
+        default=10,
         soft_min=0,
     )
     
     max_bird_altitude: FloatProperty(
         name='Max Altitude',
         description='Max Altitude',
-        default=15,
+        default=20,
         soft_min=0,
     )
     
@@ -986,14 +988,6 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
         default=50.0,
         soft_min=1.0,
         soft_max=200.0,
-    )
-    
-    size: IntProperty(
-        name='Size',
-        description='Number of terrain cells generated',
-        default=400,
-        soft_min=50,
-        soft_max=1000,
     )
     
     horiz_scale: FloatProperty(
@@ -1110,9 +1104,6 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
         if self.chooseSet == '0':
             box = layout.box()
             box.label(text="Universal:")
-            
-            row = box.row()
-            row.prop(self, 'size')
             
             row = box.row()
             row.prop(self, 'scale')
