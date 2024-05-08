@@ -7,23 +7,22 @@ bl_info = {
     "description": "Adds a City Scene",
 }
 
-import bpy, random
+import bpy, random, os, sys
 import numpy as np
 from bpy.types import Operator
 from bpy.props import FloatProperty, IntProperty, FloatVectorProperty, BoolProperty, EnumProperty, IntVectorProperty
 from bpy_extras.object_utils import AddObjectHelper, object_data_add
 from copy import deepcopy
-from mathutils import Vector
-from math import sin,cos,pi, ceil, floor, radians
-from random import randint, uniform
+from mathutils import Vector, noise
+from math import sin,cos,pi, ceil, floor, radians, sqrt
+from random import randint, uniform, random
 from mathutils import Euler
-import os
-import sys
 
 dirp = os.path.dirname(bpy.data.filepath)
 if not dirp in sys.path:
     sys.path.append(dirp)
 
+from Delaunator import Delaunator
 
 settings = [('0', 'Universal', 'Universal'),
             ('1', 'Terrain', 'Terrain'),
@@ -33,7 +32,284 @@ settings = [('0', 'Universal', 'Universal'),
             
 bird_types = [('0', 'Bird', 'Bird'),
               ('1', 'Cone', 'Cone')]
-            
+
+building_types = [('0', 'Solid', 'Solid'),
+                  ('1', 'Brick', 'Brick'),
+                  ('2', 'Checkered', 'Checkered')]
+
+
+def create_building_mat(building_type):
+
+    #--------------------------------------------
+    #  Material: Buildings Material 
+    #--------------------------------------------
+
+    mat = bpy.data.materials.new("Buildings Material")
+    mat.use_nodes = True
+    node_tree = mat.node_tree
+    nodes = node_tree.nodes
+    nodes.clear()
+    links = node_tree.links
+
+    node = nodes.new("ShaderNodeNewGeometry")
+    node.location = (-1431.0294189453125, -330.44708251953125)
+
+    node = nodes.new("ShaderNodeSeparateXYZ")
+    node.location = (-1244.4266357421875, -301.31378173828125)
+
+    node = nodes.new("ShaderNodeMath")
+    node.location = (-1043.3829345703125, -216.1114501953125)
+
+    node = nodes.new("ShaderNodeTexCoord")
+    node.location = (-975.1100463867188, 37.48240280151367)
+
+    node = nodes.new("ShaderNodeCombineXYZ")
+    node.location = (-836.08056640625, -283.8024597167969)
+
+    node = nodes.new("ShaderNodeVectorMath")
+    node.location = (-809.06884765625, 33.85584259033203)
+    node.operation = 'MULTIPLY'
+    node.inputs["Vector"].default_value = (0.0, 0.0, 1.0)
+
+    node = nodes.new("ShaderNodeTexChecker")
+    node.location = (-638.6355590820312, 77.3689193725586)
+    node.inputs["Color2"].default_value = (0.09830456972122192, 0.0, 0.010272961109876633, 1.0)
+    node.inputs["Scale"].default_value = 52.70000076293945
+
+    node = nodes.new("ShaderNodeVectorMath")
+    node.location = (-600.3733520507812, -188.1200408935547)
+    node.name = "Vector Math.001"
+    node.operation = 'MULTIPLY'
+    node.inputs["Vector"].default_value = (0.0, 0.0, 1.0)
+    node.inputs["Vector"].default_value = (1.6000003814697266, 0.30000001192092896, 1.0)
+
+    node = nodes.new("ShaderNodeAttribute")
+    node.location = (-485.87030029296875, 275.9276428222656)
+    node.attribute_name = "Col"
+
+    node = nodes.new("ShaderNodeTexBrick")
+    node.location = (-348.505859375, -132.22488403320312)
+    node.show_texture = True
+    node.offset = 0.0
+    node.squash = 0.8999999761581421
+    node.inputs["Color1"].default_value = (1.0, 0.8565634489059448, 0.891800045967102, 1.0)
+    node.inputs["Mortar"].default_value = (0.005384417250752449, 0.0, 0.05494202300906181, 1.0)
+    node.inputs["Scale"].default_value = 12.699999809265137
+    node.inputs["Mortar Size"].default_value = 0.009999999776482582
+
+    node = nodes.new("ShaderNodeMix")
+    node.location = (-158.33932495117188, 272.6905212402344)
+    node.data_type = 'RGBA'
+    node.blend_type = 'MULTIPLY'
+    node.inputs["Factor"].default_value = 0.6600000262260437
+    node.inputs["A"].enabled = True
+    node.inputs["B"].enabled = True
+    node.outputs["Result"].enabled = True
+
+    node = nodes.new("ShaderNodeBsdfPrincipled")
+    node.location = (20.392353057861328, 294.3239440917969)
+
+    node = nodes.new("ShaderNodeOutputMaterial")
+    node.location = (300.0, 300.0)
+
+    #Links
+
+    links.new(
+        nodes["Principled BSDF"].outputs["BSDF"],
+        nodes["Material Output"].inputs["Surface"]
+        )
+
+    links.new(
+        nodes["Texture Coordinate"].outputs["Generated"],
+        nodes["Vector Math"].inputs["Vector"]
+        )
+
+    links.new(
+        nodes["Vector Math"].outputs["Vector"],
+        nodes["Checker Texture"].inputs[0]
+        )
+
+    links.new(
+        nodes["Attribute"].outputs["Color"],
+        nodes["Mix"].inputs["A"]
+        )
+
+    links.new(
+        nodes["Mix"].outputs["Result"],
+        nodes["Principled BSDF"].inputs["Base Color"]
+        )
+
+    links.new(
+        nodes["Geometry"].outputs["Position"],
+        nodes["Separate XYZ"].inputs["Vector"]
+        )
+
+    links.new(
+        nodes["Separate XYZ"].outputs["Z"],
+        nodes["Combine XYZ"].inputs["Z"]
+        )
+
+    links.new(
+        nodes["Separate XYZ"].outputs["Z"],
+        nodes["Combine XYZ"].inputs["Y"]
+        )
+
+    if building_type == '1': # brick
+        links.new(
+            nodes["Brick Texture"].outputs["Color"],
+            nodes["Mix"].inputs["B"]
+        )
+    elif building_type == '2': # checkered
+       links.new(
+           nodes["Checker Texture"].outputs["Color"],
+           nodes["Mix"].inputs["B"]
+           )
+       
+    links.new(
+        nodes["Combine XYZ"].outputs["Vector"],
+        nodes["Vector Math.001"].inputs["Vector"]
+        )
+
+    links.new(
+        nodes["Vector Math.001"].outputs["Vector"],
+        nodes["Brick Texture"].inputs["Vector"]
+        )
+
+    links.new(
+        nodes["Separate XYZ"].outputs["X"],
+        nodes["Math"].inputs[0]
+        )
+
+    links.new(
+        nodes["Separate XYZ"].outputs["Y"],
+        nodes["Math"].inputs[1]
+        )
+
+    links.new(
+        nodes["Math"].outputs["Value"],
+        nodes["Combine XYZ"].inputs["X"]
+        )
+
+        
+    return mat
+
+def create_terrain_mat(bricks, brick_threshold):
+    
+    #--------------------------------------------
+    #  Material: Terrain 
+    #--------------------------------------------
+
+    mat = bpy.data.materials.new("Terrain")
+    mat.use_nodes = True
+    node_tree = mat.node_tree
+    nodes = node_tree.nodes
+    nodes.clear()
+    links = node_tree.links
+
+    node = nodes.new("ShaderNodeNewGeometry")
+    node.location = (-1057.9560546875, 238.4239044189453)
+
+    node = nodes.new("ShaderNodeVectorMath")
+    node.location = (-863.0867309570312, 241.71493530273438)
+    node.operation = 'DISTANCE'
+    node.inputs[1].default_value = (0.0, 0.0, 1.0)
+
+    node = nodes.new("ShaderNodeFloatCurve")
+    node.location = (-692.4407348632812, 304.6192626953125)
+    map = node.mapping
+    for i in range(2):
+        map.curves[0].points.new(0.0, 1.0)
+
+    map.curves[0].points.foreach_set(
+           "location", [
+            0.0, 0.0,
+            0.33090919256210327, 0.029999997466802597,
+            0.7636359930038452, 0.19500000774860382,
+            1.0, 1.0
+            ])
+
+    node = nodes.new("ShaderNodeTexBrick")
+    node.location = (-414.4537658691406, 12.010777473449707)
+    node.show_texture = True
+    node.inputs["Color1"].default_value = (0.800315260887146, 0.05254798382520676, 0.03936794027686119, 1.0) # param brick color
+    node.inputs["Scale"].default_value = 77.79999542236328
+
+    node = nodes.new("ShaderNodeMath")
+    node.location = (-397.08807373046875, 446.94158935546875)
+    node.operation = 'COMPARE'
+    node.use_clamp = True
+    node.inputs[1].default_value = 0.0
+    node.inputs[2].default_value = 0.1 * brick_threshold # 0.07000000029802322 # param for path
+
+    node = nodes.new("ShaderNodeMix")
+    node.location = (-394.97613525390625, 257.9634704589844)
+    node.data_type = 'RGBA'
+    node.inputs["A"].default_value = (0.00044031089055351913, 0.09851755946874619, 0.0, 1.0) # grass color
+    node.inputs["B"].default_value = (0.03152122348546982, 0.03152122348546982, 0.03152122348546982, 1.0) # rock color
+
+    node = nodes.new("ShaderNodeMix")
+    node.location = (-185.16549682617188, 358.50408935546875)
+    node.name = "Mix.001"
+    node.data_type = 'RGBA'
+    node.inputs["A"].default_value = (0.00044031089055351913, 0.09851755946874619, 0.0, 1.0) 
+    node.inputs["B"].default_value = (0.3970089554786682, 0.40132981538772583, 0.21035198867321014, 1.0)
+
+    node = nodes.new("ShaderNodeBsdfPrincipled")
+    node.location = (82.87584686279297, 363.02154541015625)
+
+    node = nodes.new("ShaderNodeOutputMaterial")
+    node.location = (372.8758544921875, 363.02154541015625)
+
+    #Links
+
+    links.new(
+        nodes["Principled BSDF"].outputs["BSDF"],
+        nodes["Material Output"].inputs["Surface"]
+        )
+
+    links.new(
+        nodes["Geometry"].outputs["Normal"],
+        nodes["Vector Math"].inputs[0]
+        )
+
+    links.new(
+        nodes["Vector Math"].outputs["Value"],
+        nodes["Float Curve"].inputs["Value"]
+        )
+
+    links.new(
+        nodes["Float Curve"].outputs["Value"],
+        nodes["Math"].inputs["Value"]
+        )
+
+    links.new(
+        nodes["Math"].outputs["Value"],
+        nodes["Mix.001"].inputs["Factor"]
+        )
+
+    links.new(
+        nodes["Float Curve"].outputs["Value"],
+        nodes["Mix"].inputs["Factor"]
+        )
+
+    links.new(
+        nodes["Mix"].outputs["Result"],
+        nodes["Mix.001"].inputs["A"]
+        )
+    
+    if bricks:
+        links.new(
+            nodes["Brick Texture"].outputs["Color"],
+            nodes["Mix.001"].inputs["B"]
+            )
+
+    links.new(
+        nodes["Mix.001"].outputs["Result"],
+        nodes["Principled BSDF"].inputs["Base Color"]
+        )
+        
+    return mat
+
 def delete_object(name):
     if name in bpy.data.objects:
         obj = bpy.data.objects[name]
@@ -48,7 +324,27 @@ def clear_bird_fbx():
         
 def clamp_magnitude(v, m):
     return v * (m / np.linalg.norm(v))
-            
+
+def fractal_noise(location: Vector, persistence, lacunarity, octaves = 5):
+    
+    final_noise = 0.0
+    noise_mag = 1.0
+    
+    # persistence = 0.32
+    P = persistence
+    
+    # lacunarity = 2.4
+    L = lacunarity
+    
+    for i in range(octaves):
+        final_noise += (noise.noise(L * location, noise_basis='PERLIN_ORIGINAL')) * P
+        noise_mag += P
+        
+        P *= persistence
+        L *= lacunarity
+        
+    return final_noise / noise_mag
+    
 class Obstacle:
     def __init__(self, pos, r):
         self.position = pos
@@ -222,7 +518,191 @@ def initialize_body(name, position, velocity, size, type):
     bpy.context.object.name = name
     bpy.ops.object.shade_smooth()
     return bpy.context.object
+    
+def generate_terrain(size, horiz_scale, height_function, bricks, brick_threshold):
+
+    vertices = []
+    triangles = []
+    edges = []
+    
+    heightmap = []
+    
+    for i in range(size):
+        h_row = []
+        
+        
+        for j in range(size):
             
+            x = horiz_scale * i
+            y = horiz_scale * j
+            z = height_function(Vector((x, y, 0.0)))
+
+            ind = len(vertices)            
+            vertices.append(Vector((x, y, z)))
+            
+            if i != size - 1 and j != size - 1:
+                triangles.append([ind, ind + 1, ind + size + 1])
+                triangles.append([ind, ind + size, ind + size + 1])
+                
+            h_row.append(z)
+            
+        heightmap.append(h_row)    
+        # colors.append(get_color(lr, vert))
+
+    mesh = bpy.data.meshes.new(name="Terrain")
+    mesh.from_pydata(vertices, edges, triangles)
+    
+    obj = object_data_add(bpy.context, mesh)
+    obj.data.materials.append(create_terrain_mat(bricks, brick_threshold))
+    
+    return heightmap # return a heightmap here!
+    
+def get_buildings(size, building_scale = 1.0, building_height = 1.0, height_var = 0.1, area_ratio = 0.8, area_var = 0.1):
+    
+    init_verts = []
+    pts = []
+    
+    for i in range(floor(size) + 1):
+        for j in range(floor(size) + 1):
+            
+            pos = Vector((i,j, 0.0))
+            cell = pos + noise.cell_vector(pos)
+            
+            init_verts.append(cell * Vector((building_scale, building_scale, 0.0)))
+            
+            pts.append([cell[0], cell[1]])
+        
+    
+    del_tris = Delaunator(pts).triangles
+    
+    buildings = [] # array of tuples of tris, verts
+    
+    for i in range(0, len(del_tris), 3):
+        
+        b_tris = []
+        b_verts = []
+        
+        tri = [del_tris[i+k] for k in range(3)]
+        
+            
+        a = init_verts[tri[0]]
+        b = init_verts[tri[1]]
+        c = init_verts[tri[2]]
+        
+        area = 0.5 * abs(a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y))
+        
+        if area < 0.4:
+            continue
+        
+        centroid = Vector((0.0, 0.0, 0.0))                
+        
+        for p in tri:
+            centroid += init_verts[p] / 3
+        
+        if centroid.x > size or centroid.y > size or centroid.x < 0.8 or centroid.y < 0.8:
+            continue
+        
+        new_tri1 = []
+        
+        d = min(1.0, area_ratio + (random() - 0.5) * area_var) # size of bldng + rand
+        if d < 0.4:
+            continue
+    
+        if d > 0.99:
+            l = 0
+            # can you find neighboring buildings 
+            # and make them all the same color?
+        
+        for p in tri:
+            diff = init_verts[p] - centroid
+            i = len(b_verts)
+            
+            b_verts.append(centroid + diff * d)
+            new_tri1.append(i)
+            
+        b_tris.append(new_tri1)
+        new_tri2 = []
+        
+        
+        h_off = height_var * noise.noise(centroid)
+        
+        for p in tri:
+            diff = init_verts[p] - centroid
+            i = len(b_verts)
+            
+            b_verts.append(centroid + diff * d + Vector((0.0, 0.0, building_height + h_off)))
+            new_tri2.append(i)
+    
+        b_tris.append(new_tri2)
+        
+        for index in range(3):
+             
+            nindex = (index + 1) % 3
+            b_tris.append([new_tri1[index],  new_tri2[index], new_tri1[nindex]])
+            b_tris.append([new_tri1[nindex], new_tri2[index], new_tri2[nindex]])
+            
+        buildings.append((b_verts, b_tris))
+    
+    return buildings
+
+def add_buildings(input_buildings, height_function, single_color=None, building_type='0'):
+
+    triangles = []
+    vertices = []
+
+    for building in input_buildings:
+                        
+        verts = building[0]
+        tris = building[1]
+            
+        centroid = Vector((0.0, 0.0, 0.0))
+    
+        for p in tris[0]:
+            centroid += verts[p] / 3
+
+        eps = Vector((0.05, 0.0, 0.0))
+                    
+        ground_height = height_function(centroid)
+        
+        gradient = Vector((height_function(centroid + eps.xyy) - ground_height,
+                            height_function(centroid + eps.yxy) - ground_height, 0.0)) / eps.x
+        
+#            print(verts)
+        
+        if gradient.length <= 0.3:
+            
+            # spawn the actual building
+            ind = len(vertices)
+            triangles += [[ind + k for k in tri] for tri in tris]
+            vertices += [v + Vector((0,0,ground_height)) for v in verts]
+        
+            
+    mesh = bpy.data.meshes.new(name="Buildings")
+    mesh.from_pydata(vertices, [], triangles)
+    
+    if not mesh.vertex_colors:
+        mesh.vertex_colors.new()
+    
+    # print(len(triangles))
+    
+#        for building in input_buildings:
+    for i in range(0, len(triangles), 8):
+        if single_color is None:
+            r, g, b = [random() for _k in range(3)]
+        else:
+            r, g, b = [single_color.x, single_color.y, single_color.z]
+        
+        for j in range(3*8):
+            mesh.vertex_colors.active.data[3*i+j].color = (r, g, b, 1.0)
+
+    
+    # useful for development when the mesh may be invalid.
+    # mesh.validate(verbose=True)
+    obj = object_data_add(bpy.context, mesh)
+    obj.data.materials.append(create_building_mat(building_type)) # this is gonna need some params for sure
+        
+    return mesh
+
 def create_clouds(self, context):
     # Set Seed
     random.seed(self.seed)
@@ -292,16 +772,43 @@ def create_boids(self, context):
             elif self.bird_type == '1':
                 bodies[i].rotation_euler = Euler((0, np.arccos(brains[i].velocity[2] / np.linalg.norm(brains[i].velocity)),
                                         np.arctan2(brains[i].velocity[1], brains[i].velocity[0])), 'XYZ')
-                                        
+        
+def create_terrain(self, context):
+    
+    def terrain(location):
+        
+        return self.height_scale * fractal_noise(self.noise_scale * self.horiz_scale * location,
+                                        self.noise_persistence, self.noise_lacunarity)
+    
+    generate_terrain(self.size, self.horiz_scale, terrain, self.brick_ground, self.brick_ground_threshold)
+    
+    pass
+
+def create_buildings(self, context):
+    
+    builds = get_buildings(self.size * self.horiz_scale, self.building_scale, self.building_height,
+            self.building_height_variation, self.building_area_ratio, self.building_area_ratio_variation)
+    
+    def terrain(location):
+        
+        return self.height_scale * fractal_noise(self.noise_scale * self.horiz_scale * location,
+                                        self.noise_persistence, self.noise_lacunarity)
+
+    
+    add_buildings(builds, terrain, self.building_colors if self.one_color_buildings else None, self.building_type)
 
 def add_city(self, context):
-    if self.include_birds:
-        bpy.ops.import_scene.fbx(filepath=dirp+"\\bird.fbx")
-        create_boids(self, context)
-        clear_bird_fbx()
+#    if self.include_birds:
+#        bpy.ops.import_scene.fbx(filepath=dirp+"\\bird.fbx")
+#        create_boids(self, context)
+#        clear_bird_fbx()
         
-    if self.include_clouds:
-        create_clouds(self, context)
+#    if self.include_clouds:
+#        create_clouds(self, context)
+        
+    create_terrain(self, context)
+    
+    create_buildings(self, context)
 
 class OBJECT_OT_add_city(Operator, AddObjectHelper):
     """Create a new Custom City Scene"""
@@ -325,9 +832,135 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
         min=0,
     )
     
+    # TERRAIN AND BUILDINGS
+    
+    height_scale: FloatProperty(
+        name='Height Scale',
+        description='Vertical scale of the terrain',
+        default=50.0,
+        soft_min=1.0,
+        soft_max=200.0,
+    )
+    
+    size: IntProperty(
+        name='Size',
+        description='Number of terrain cells generated',
+        default=400,
+        soft_min=50,
+        soft_max=1000,
+    )
+    
+    horiz_scale : FloatProperty(
+        name='Horizontal Scale',
+        description='Scale (in flat area) of the generated buildings and terrain',
+        default=0.1,
+        soft_min=0.001,
+        soft_max=10.0,
+    )
+    
+    noise_scale : FloatProperty(
+        name='Noise Scale',
+        description='How clustered together noise features are on the terrain',
+        default=0.1,
+        soft_min=0.005,
+        soft_max=5.0,
+    )
+    
+    noise_persistence: FloatProperty(
+        name='Noise Persistence',
+        description='How persistent each consecutive layer of noise is',
+        default=0.4,
+        soft_min=0.005,
+        soft_max=1.0,
+    )
+    
+    noise_lacunarity: FloatProperty(
+        name='Noise Lacunarity',
+        description='How much denser each consecutive layer of noise is',
+        default=2.2,
+        soft_min=0.005,
+        soft_max=1.0,
+    )
+    
+    building_height : FloatProperty(
+        name='Building height',
+        description='How tall each building is',
+        default=1.0,
+        soft_min=0.05,
+        soft_max=4.0,
+    )
+    
+    building_height_variation : FloatProperty(
+        name='Building height variation',
+        description='How much the height of each building varies (as a \% of height)',
+        default=0.2,
+        soft_min=0.05,
+        soft_max=1.0,
+    )
+    
+    building_scale : FloatProperty(
+        name='Building scale',
+        description='How BIG each building is',
+        default=1.0,
+        soft_min=0.1,
+        soft_max=6.0,
+    )
+    
+    building_area_ratio: FloatProperty(
+        name='Building Area Ratio',
+        description='How much of each trangular "grid" cell each building takes up',
+        default=0.8,
+        soft_min=0.05,
+        soft_max=1.0,
+    )
+    
+    building_area_ratio_variation: FloatProperty(
+        name='Ratio variation',
+        description='How much the Building area ratio varies',
+        default=0.2,
+        soft_min=0.05,
+        soft_max=0.5,
+    )
+    
+    building_type: EnumProperty(
+        name='Building Type',
+        items=building_types,
+        default='0',
+    )
+    
+    one_color_buildings: BoolProperty(
+        name='One-color buildings',
+        description='Whether or not buildings should be one color',
+        default=False
+    )
+    
+    brick_ground: BoolProperty(
+        name='Brick ground',
+        description='Whether or not the ground should be painted with brick',
+        default=False
+    )
+    
+    brick_ground_threshold : FloatProperty(
+        name='Brick ground variation',
+        description='How much brick should there be',
+        default=0.6,
+        soft_min=0.01,
+        soft_max=5.0,
+    )
+    
+    building_colors: FloatVectorProperty(
+        name='Building color',
+        description='Color of buildings',
+        subtype="RGB",
+        default=(0.0, 0.0, 0.0)
+    )
+    
+    
+    ## BOIDS AND CLOUDS
+    
     scale: IntProperty(
         name='Scale',
-        description='Scale',
+        description='Scale of bird',
         default=10,
         soft_min=5,
         soft_max=20,
@@ -469,6 +1102,7 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
         default='0',
     )
     
+    
     def draw(self, context):
         
         layout = self.layout
@@ -477,6 +1111,9 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
         if self.chooseSet == '0':
             box = layout.box()
             box.label(text="Universal:")
+            
+            row = box.row()
+            row.prop(self, 'size')
             
             row = box.row()
             row.prop(self, 'scale')

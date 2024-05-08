@@ -20,9 +20,7 @@ from copy import deepcopy
 from math import floor, sqrt
 import os
 import sys
-import random
-
-import math
+from random import random
 
 dirp = os.path.dirname(bpy.data.filepath)
 if not dirp in sys.path:
@@ -185,7 +183,6 @@ def create_building_mat():
 
         
     return mat
-
 
 def create_terrain_mat():
     
@@ -379,7 +376,7 @@ def get_buildings(location, size, building_scale = 1.0, building_height = 1.0):
             pos = Vector((i,j, 0.0))
             cell = pos + noise.cell_vector(pos)
             
-            init_verts.append(cell * Vector((1.0, 1.0, 0.0)))
+            init_verts.append(cell * Vector((building_scale, building_scale, 0.0)))
             
             pts.append([cell[0], cell[1]])
         
@@ -414,22 +411,37 @@ def get_buildings(location, size, building_scale = 1.0, building_height = 1.0):
             continue
         
         new_tri1 = []
-        for p in tri:
-            diff = init_verts[p] - centroid
-            i = len(b_verts)
-            
-            b_verts.append(centroid + diff * 0.8)
-            new_tri1.append(i)
-            
-        b_tris.append(new_tri1)
-        new_tri2 = []
+        
+        d = min(1.0, 0.0 + random() * 1.2) # size of bldng + rand
+        if d < 0.4:
+            continue
+    
+        if d > 0.99:
+            l = 0
+        
         
         for p in tri:
             diff = init_verts[p] - centroid
             i = len(b_verts)
             
-            b_verts.append(centroid + diff * 0.8 + Vector((0.0, 0.0, building_scale + noise.noise(centroid))))
+            b_verts.append(centroid + diff * d)
+            new_tri1.append(i)
+            
+        b_tris.append(new_tri1)
+        new_tri2 = []
+        
+        
+        h_off = noise.noise(centroid)
+        
+        for p in tri:
+            diff = init_verts[p] - centroid
+            i = len(b_verts)
+            
+            b_verts.append(centroid + diff * d + Vector((0.0, 0.0, building_height + h_off)))
             new_tri2.append(i)
+        
+#        if len(new_tri2) != len(tri):
+#            continue
     
         b_tris.append(new_tri2)
         
@@ -450,7 +462,7 @@ def register():
 
     SIZE = 500
     VERT_SCALE = 50.0
-    FT_SCALE = 0.2
+    FT_SCALE = 0.1
     HORIZ_SCALE = 0.1
     LOC = Vector((0.0, 0.0, 0.0))
 
@@ -518,7 +530,7 @@ def register():
         
 #        for building in input_buildings:
         for i in range(0, len(triangles), 8):
-            r, g, b = [random.random() for _k in range(3)]
+            r, g, b = [random() for _k in range(3)]
             
             for j in range(3*8):
                 mesh.vertex_colors.active.data[3*i+j].color = (r, g, b, 1.0)
@@ -536,7 +548,7 @@ def register():
 #       
     heightmap = create_terrain(LOC, SIZE, FT_SCALE, VERT_SCALE, HORIZ_SCALE, terrain)
     
-    builds = get_buildings(LOC, SIZE * HORIZ_SCALE)
+    builds = get_buildings(LOC, SIZE * HORIZ_SCALE, 1.0, 2.0)
     
     add_buildings(LOC, builds, terrain)
     
