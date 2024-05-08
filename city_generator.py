@@ -73,7 +73,7 @@ def create_building_mat(building_type):
     node = nodes.new("ShaderNodeVectorMath")
     node.location = (-809.06884765625, 33.85584259033203)
     node.operation = 'MULTIPLY'
-    node.inputs["Vector"].default_value = (0.0, 0.0, 1.0)
+    node.inputs[1].default_value = (0.0, 0.0, 1.0)
 
     node = nodes.new("ShaderNodeTexChecker")
     node.location = (-638.6355590820312, 77.3689193725586)
@@ -85,7 +85,7 @@ def create_building_mat(building_type):
     node.name = "Vector Math.001"
     node.operation = 'MULTIPLY'
     node.inputs["Vector"].default_value = (0.0, 0.0, 1.0)
-    node.inputs["Vector"].default_value = (1.6000003814697266, 0.30000001192092896, 1.0)
+    node.inputs[1].default_value = (1.6000003814697266, 0.30000001192092896, 1.0)
 
     node = nodes.new("ShaderNodeAttribute")
     node.location = (-485.87030029296875, 275.9276428222656)
@@ -301,16 +301,23 @@ def create_terrain_mat(bricks, brick_threshold):
         nodes["Mix.001"].inputs["A"]
         )
     
+    links.new(
+        nodes["Brick Texture"].outputs["Color"],
+        nodes["Mix.001"].inputs["B"]
+        )
+
+
     if bricks:
         links.new(
-            nodes["Brick Texture"].outputs["Color"],
-            nodes["Mix.001"].inputs["B"]
+            nodes["Mix.001"].outputs["Result"],
+            nodes["Principled BSDF"].inputs["Base Color"]
             )
+    else:
 
-    links.new(
-        nodes["Mix.001"].outputs["Result"],
-        nodes["Principled BSDF"].inputs["Base Color"]
-        )
+        links.new(
+            nodes["Mix"].outputs["Result"],
+            nodes["Principled BSDF"].inputs["Base Color"]
+            )
         
     return mat
 
@@ -329,7 +336,7 @@ def clear_bird_fbx():
 def clamp_magnitude(v, m):
     return v * (m / np.linalg.norm(v))
 
-def fractal_noise(location: Vector, persistence, lacunarity, octaves = 5):
+def fractal_noise(location: Vector, persistence, lacunarity, octaves = 6):
     
     final_noise = 0.0
     noise_mag = 1.0
@@ -694,7 +701,7 @@ def add_buildings(input_buildings, height_function, single_color=None, building_
         if single_color is None:
             r, g, b = [random.random() for _k in range(3)]
         else:
-            r, g, b = [single_color.x, single_color.y, single_color.z]
+            r, g, b = [single_color.r, single_color.g, single_color.b]
         
         for j in range(3*8):
             mesh.vertex_colors.active.data[3*i+j].color = (r, g, b, 1.0)
@@ -706,6 +713,34 @@ def add_buildings(input_buildings, height_function, single_color=None, building_
     obj.data.materials.append(create_building_mat(building_type)) # this is gonna need some params for sure
         
     return mesh
+
+def spawn_one_tree(location, prev_tree = None):
+
+    if 'Camera' in bpy.data.objects:
+        camera_obj = bpy.data.objects['Camera']
+    else:
+        camera_obj = bpy.data.scenes["Scene"].camera
+        
+    if prev_tree is None:
+        bpy.ops.import_image.to_plane(files=[{"name":'tree.png'}], directory=dirp)
+        tree = bpy.context.object
+    else:
+        tree = prev_tree.copy()
+        tree.data = prev_tree.data.copy()
+        bpy.context.collection.objects.link(tree)
+    
+    tree.location = location
+
+    cam_constraint = tree.constraints.new(type='TRACK_TO')
+    cam_constraint.target = camera_obj
+
+    rot_constraint = tree.constraints.new(type='LIMIT_ROTATION')
+    rot_constraint.use_limit_x = True
+    rot_constraint.max_x = pi/2
+    rot_constraint.min_x = pi/2
+    rot_constraint.use_limit_y = True
+
+    return tree
 
 def create_clouds(self, context):
     # Set Seed
@@ -779,30 +814,84 @@ def create_boids(self, context):
             elif self.bird_type == '1':
                 bodies[i].rotation_euler = Euler((0, np.arccos(brains[i].velocity[2] / np.linalg.norm(brains[i].velocity)),
                                         np.arctan2(brains[i].velocity[1], brains[i].velocity[0])), 'XYZ')
-        
-def create_terrain(self, context):
+     
+def create_terrain_function(self):
+    
+    random.seed(self.seed)
+    offset = Vector((random.random(), random.random(), random.random())) * 30.0
     
     def terrain(location):
         
-        return self.height_scale * fractal_noise(self.noise_scale * self.horiz_scale * location,
+        return self.height_scale * fractal_noise(offset + self.noise_scale * self.horiz_scale * location,
                                         self.noise_persistence, self.noise_lacunarity)
     
-    generate_terrain(self.scale, self.horiz_scale, terrain, self.brick_ground, self.brick_ground_threshold)
+    return terrain
+   
+def flat(location):
+        return 0.0
     
-    pass
+def create_trees(self, context):
+    
+    terrain = create_terrain_function(self)
+    
+    height_func = terrain if self.include_terrain else flat
+    
+    buildings = None
+    if self.include_buildings:
+        buildings = get_buildings(self.scale * self.horiz_scale, self.building_scale, self.building_height,
+            self.building_height_variation, self.building_area_ratio, self.building_area_ratio_variation)
+    
+    S = floor(self.scale * self.horiz_scale * self.tree_density)
+    
+    random.seed(self.seed)
+    
+    last_tree = None
+    
+    for i in range(S):
+        
+        for j in range(S):
+            
+            loc = Vector((i, j, 0.)) / self.tree_density
+            h = height_func(loc)
+
+            eps = Vector((0.05, 0.0, 0.0))
+            
+            gradient = Vector((height_func(loc + eps.xyy) - h,
+                                height_func(loc + eps.yxy) - h, 0.0)) / eps.x
+            
+            if gradient.length >= 0.25 and gradient.length <= 0.75:
+                loc += Vector((random.random(), random.random(), 0.0))
+                loc.z = height_func(loc)
+                last_tree = spawn_one_tree(loc, last_tree)
+        
+def create_terrain(self, context):
+    
+    # def terrain(location):
+        
+    #     return self.height_scale * fractal_noise(self.noise_scale * self.horiz_scale * location,
+    #                                     self.noise_persistence, self.noise_lacunarity)
+    
+    terrain = create_terrain_function(self)
+    
+    height_func = terrain if self.include_terrain else flat
+    
+    generate_terrain(self.scale, self.horiz_scale, height_func, self.brick_ground, self.brick_ground_threshold)
 
 def create_buildings(self, context):
     
     builds = get_buildings(self.scale * self.horiz_scale, self.building_scale, self.building_height,
             self.building_height_variation, self.building_area_ratio, self.building_area_ratio_variation)
     
-    def terrain(location):
+    # def terrain(location):
         
-        return self.height_scale * fractal_noise(self.noise_scale * self.horiz_scale * location,
-                                        self.noise_persistence, self.noise_lacunarity)
-
+    #     return self.height_scale * fractal_noise(self.noise_scale * self.horiz_scale * location,
+    #                                     self.noise_persistence, self.noise_lacunarity)
     
-    add_buildings(builds, terrain, self.building_colors if self.one_color_buildings else None, self.building_type)
+    terrain = create_terrain_function(self)
+    
+    height_func = terrain if self.include_terrain else flat
+    
+    add_buildings(builds, height_func, self.building_colors if self.one_color_buildings else None, self.building_type)
 
 def add_city(self, context):
     if self.include_birds:
@@ -812,10 +901,15 @@ def add_city(self, context):
         
     if self.include_clouds:
         create_clouds(self, context)
-        
-    create_terrain(self, context)
     
-    create_buildings(self, context)
+    if self.include_buildings or self.include_terrain or self.include_trees:
+        create_terrain(self, context)
+    
+    if self.include_buildings:
+        create_buildings(self, context)
+        
+    if self.include_trees:
+        create_trees(self, context)
 
 class OBJECT_OT_add_city(Operator, AddObjectHelper):
     """Create a new Custom City Scene"""
@@ -839,10 +933,36 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
         min=0,
     )
     
+    include_buildings: BoolProperty(
+        name='Add Buildings',
+        description='Add Buildings?',
+        default=True,
+    )
+    
+    include_terrain: BoolProperty(
+        name='Add Terrain',
+        description='Add Terrain?',
+        default=True,
+    )
+    
+    include_trees: BoolProperty(
+        name='Add Trees',
+        description='Add Trees?',
+        default=True,
+    )
+    
+    tree_density: FloatProperty(
+        name='Tree Density',
+        description='How many trees per unit area',
+        default=1.0,
+        soft_min=0.05,
+        soft_max=5.0,
+    )
+    
     scale: IntProperty(
         name='Scale',
         description='Scale',
-        default=400,
+        default=100,
         soft_min=50,
         soft_max=1000,
     )
@@ -959,7 +1079,7 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
     include_birds: BoolProperty(
         name='Add Birds?',
         description='Add Birds?',
-        default=True,
+        default=False,
     )
     
     min_bird_altitude: FloatProperty(
@@ -1077,11 +1197,20 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
         soft_min=0.05,
         soft_max=0.5,
     )
+
     
     building_type: EnumProperty(
         name='Building Type',
         items=building_types,
         default='0',
+    )
+    
+    building_colors: FloatVectorProperty(
+        name='Building color',
+        description='Color of buildings',
+        subtype="COLOR",
+        size=3,
+        default=(0.0, 0.0, 0.0),
     )
     
     one_color_buildings: BoolProperty(
@@ -1096,20 +1225,28 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
         default=False
     )
     
+    brick_ground_scale: BoolProperty(
+        name='Brick ground scale',
+        description='Size of bricks',
+        default=False
+    )
+    
+    brick_ground_color: FloatVectorProperty(
+        name='Brick ground color',
+        description='Color of brick ground',
+        subtype="COLOR",
+        size=3,
+        default=(0.0, 0.0, 0.0),
+    )
+    
     brick_ground_threshold : FloatProperty(
-        name='Brick ground variation',
+        name='Brick ground threshold',
         description='How much brick should there be',
         default=0.6,
         soft_min=0.01,
         soft_max=5.0,
     )
     
-    building_colors: FloatVectorProperty(
-        name='Building color',
-        description='Color of buildings',
-        subtype="RGB",
-        default=(0.0, 0.0, 0.0),
-    )
     
     
     def draw(self, context):
@@ -1134,12 +1271,74 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
             box = layout.box()
             box.label(text="Terrain:")
             
-            # row = box.row()
-            # row.prop(self, 'radius')
-        
+            row = box.row()
+            row.prop(self, 'include_terrain')
+            
+            row = box.row()
+            row.prop(self, 'height_scale')
+            
+            row = box.row()
+            row.prop(self, 'horiz_scale')
+            
+            row = box.row()
+            row.prop(self, 'noise_scale')
+            
+            row = box.row()
+            row.prop(self, 'noise_lacunarity')
+            
+            row = box.row()
+            row.prop(self, 'noise_persistence')
+            
+            row = box.row()
+            row.prop(self, 'include_trees')
+            
+            if self.include_trees:
+                row = box.row()
+                row.prop(self, 'tree_density')
+                
+            row = box.row()
+            row.prop(self, 'brick_ground')
+            
+            if self.brick_ground:
+            
+                row = box.row()
+                row.prop(self, 'brick_ground_scale')
+                
+                row = box.row()
+                row.prop(self, 'brick_ground_color')
+                
+                row = box.row()
+                row.prop(self, 'brick_ground_threshold')
+            
+            
         elif self.chooseSet == '2':
             box = layout.box()
             box.label(text="City:")
+            
+            row = box.row()
+            row.prop(self, 'include_buildings')
+            
+            row = box.row()
+            row.prop(self, 'building_height')
+            
+            row = box.row()
+            row.prop(self, 'building_height_variation')
+            
+            row = box.row()
+            row.prop(self, 'building_area_ratio')
+            
+            row = box.row()
+            row.prop(self, 'building_area_ratio_variation')
+            
+            row = box.row()
+            row.prop(self, 'building_type')
+            
+            row = box.row()
+            row.prop(self, 'one_color_buildings')
+            
+            if self.one_color_buildings:
+                row = box.row()
+                row.prop(self, 'building_colors')
             
             # row = box.row()
             # row.prop(self, 'include_bottom')
@@ -1218,7 +1417,6 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
         add_city(self, context)
 
         return {'FINISHED'}
-
 
 # Registration
 
