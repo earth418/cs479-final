@@ -30,9 +30,6 @@ if not dirp in sys.path:
 
 from Delaunator import Delaunator
 
-EPSILON = math.pow(2,-52)
-EDGE_STACK =[None] * 512
-
 def create_building_mat():
 
     #--------------------------------------------
