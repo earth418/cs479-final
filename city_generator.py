@@ -15,7 +15,8 @@ from bpy_extras.object_utils import AddObjectHelper, object_data_add
 from copy import deepcopy
 from mathutils import Vector, noise
 from math import sin,cos,pi, ceil, floor, radians, sqrt
-from random import randint, uniform, random
+import random
+from random import randint, uniform
 from mathutils import Euler
 
 dirp = os.path.dirname(bpy.data.filepath)
@@ -604,7 +605,8 @@ def get_buildings(size, building_scale = 1.0, building_height = 1.0, height_var 
         
         new_tri1 = []
         
-        d = min(1.0, area_ratio + (random() - 0.5) * area_var) # size of bldng + rand
+        d = min(1.0, area_ratio + (random.random() - 0.5) * area_var) # size of bldng + rand
+        
         if d < 0.4:
             continue
     
@@ -688,7 +690,7 @@ def add_buildings(input_buildings, height_function, single_color=None, building_
 #        for building in input_buildings:
     for i in range(0, len(triangles), 8):
         if single_color is None:
-            r, g, b = [random() for _k in range(3)]
+            r, g, b = [random.random() for _k in range(3)]
         else:
             r, g, b = [single_color.x, single_color.y, single_color.z]
         
@@ -798,13 +800,13 @@ def create_buildings(self, context):
     add_buildings(builds, terrain, self.building_colors if self.one_color_buildings else None, self.building_type)
 
 def add_city(self, context):
-    #if self.include_birds:
-    #    bpy.ops.import_scene.fbx(filepath=dirp+"\\bird.fbx")
-    #    create_boids(self, context)
-    #    clear_bird_fbx()
+    if self.include_birds:
+        bpy.ops.import_scene.fbx(filepath=dirp+"/bird.fbx")
+        create_boids(self, context)
+        clear_bird_fbx()
         
-    #if self.include_clouds:
-    #    create_clouds(self, context)
+    if self.include_clouds:
+        create_clouds(self, context)
         
     create_terrain(self, context)
     
@@ -867,7 +869,7 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
     cloud_height: FloatProperty(
         name='Altitude',
         description='Altitude',
-        default=10,
+        default=20,
         soft_min=0,
         soft_max=100,
     )
