@@ -18,554 +18,321 @@ from bpy_extras.object_utils import AddObjectHelper, object_data_add
 from mathutils import Vector, noise
 from copy import deepcopy
 from math import floor, sqrt
+import os
+import sys
+import random
 
 import math
+
+dirp = os.path.dirname(bpy.data.filepath)
+if not dirp in sys.path:
+    sys.path.append(dirp)
+
+from Delaunator import Delaunator
 
 EPSILON = math.pow(2,-52)
 EDGE_STACK =[None] * 512
 
-class Delaunator:
-
-    def __init__(self,points):
-        n = len(points)
-
-        if (len(points) < 3):
-            raise ValueError("Need at least 3 points")
-        coords = [None] * n * 2
-
-        for i in range(0,n):
-            p = points[i]
-            coords[2 * i] = (p[0])
-            coords[2 * i+1] = (p[1])
-        triangles = self.constructor(coords)
-
-    def constructor(self, coords):
-        n = len(coords) >> 1
-
-        self.coords = coords
-
-        # arrays that will store the triangulation graph
-        maxTriangles = max(2 * n - 5, 0)
-        self._triangles = [None] * maxTriangles * 3
-        self._halfedges = [None] * maxTriangles * 3
-
-        # temporary arrays for tracking the edges of the advancing convex hull
-        self.hashSize = math.ceil(math.sqrt(n))
-        self.hullPrev = [None] * n # edge to prev edge
-        self.hullNext = [None] * n # edge to next edge
-        self.hullTri = [None] * n # edge to adjacent triangle
-        self.hullHash = [-1] * self.hashSize # angular edge hash
-
-        # temporary arrays for sorting points
-        self._ids =  [None] * n
-        self._dists = [None] * n
-        triangles = self.update(coords)
-
-        return triangles
-
-    def update(self,coords):
-        n = len(coords) >> 1
-
-        # populate an array of point indices; calculate input data bbox
-        minX = math.inf
-        minY = math.inf
-        maxX = -math.inf
-        maxY = -math.inf
-
-        for i in range(0,n):
-            x = coords[2 * i]
-            y = coords[2 * i + 1]
-            if (x < minX): minX = x
-            if (y < minY): minY = y
-            if (x > maxX): maxX = x
-            if (y > maxY): maxY = y
-            self._ids[i] = i
-
-        cx = (minX + maxX) / 2
-        cy = (minY + maxY) / 2
-
-        minDist = math.inf
-        i0 = 0
-        i1 = 0
-        i2 = 0
-
-        # pick a seed point close to the center
-        for i in range(0,n):
-            d = dist(cx, cy, coords[2 * i], coords[2 * i + 1])
-
-            if (d < minDist):
-                i0 = i
-                minDist = d
-
-        i0x = coords[2 * i0]
-        i0y = coords[2 * i0 + 1]
-        minDist = math.inf
-
-        # find the point closest to the seed
-        for i in range(0,n):
-            if (i == i0): continue
-            d = dist(i0x, i0y, coords[2 * i], coords[2 * i + 1])
-
-            if (d < minDist and d > 0):
-                i1 = i
-                minDist = d
-
-        i1x = coords[2 * i1]
-        i1y = coords[2 * i1 + 1]
-
-        minRadius = math.inf
-
-        # find the third point which forms the smallest circumcircle with the first two
-        for i in range(0,n):
-            if (i == i0 or i == i1): continue
-            r = circumradius(i0x, i0y, i1x, i1y, coords[2 * i], coords[2 * i + 1])
-
-            if (r < minRadius):
-                i2 = i
-                minRadius = r
-
-        i2x = coords[2 * i2]
-        i2y = coords[2 * i2 + 1]
-
-        if (minRadius == math.inf):
-            # order collinear points by dx (or dy if all x are identical)
-            # and return the list as a hull
-            for i in range(0,n):
-                self._dists[i] = (coords[2 * i] - coords[0]) or (coords[2 * i + 1] - coords[1])
-
-            quicksort(self._ids, self._dists, 0, n - 1)
-            hull =  [None] * n
-            j = 0
-            d0 = -math.inf
-
-            for i in range(0,n):
-                id = self._ids[i]
-
-                if (self._dists[id] > d0):
-                    hull[j] = id
-                    j+=1
-                    d0 = self._dists[id]
-
-            self.hull = hull[0:j]
-            self.triangles =  []
-            self.halfedges =  []
-
-        # swap the order of the seed points for counter-clockwise orientation
-        if (orient(i0x, i0y, i1x, i1y, i2x, i2y)):
-            i = i1
-            x = i1x
-            y = i1y
-            i1 = i2
-            i1x = i2x
-            i1y = i2y
-            i2 = i
-            i2x = x
-            i2y = y
-
-        center = circumcenter(i0x, i0y, i1x, i1y, i2x, i2y)
-        self._cx = center[0]
-        self._cy = center[1]
-
-        for i in range(0,n):
-            self._dists[i] = dist(coords[2 * i], coords[2 * i + 1], center[0], center[1])
-
-        # sort the points by distance from the seed triangle circumcenter
-        quicksort(self._ids, self._dists, 0, n - 1)
-
-        # set up the seed triangle as the starting hull
-        self._hullStart = i0
-        hullSize = 3
-
-        self.hullNext[i0] = self.hullPrev[i2] = i1
-        self.hullNext[i1] = self.hullPrev[i0] = i2
-        self.hullNext[i2] = self.hullPrev[i1] = i0
-
-        self.hullTri[i0] = 0
-        self.hullTri[i1] = 1
-        self.hullTri[i2] = 2
-
-        self.hullHash[self._hashKey(i0x, i0y)] = i0
-        self.hullHash[self._hashKey(i1x, i1y)] = i1
-        self.hullHash[self._hashKey(i2x, i2y)] = i2
-
-        self.trianglesLen = 0
-        self._addTriangle(i0, i1, i2, -1, -1, -1)
-
-        xp=0
-        yp=0
-
-        for k in range(0,len(self._ids)):
-            i = self._ids[k]
-            x = coords[2 * i]
-            y = coords[2 * i + 1]
-
-            # skip near-duplicate points
-            if (k > 0 and abs(x - xp) <= EPSILON and abs(y - yp) <= EPSILON): continue
-
-            xp = x
-            yp = y
-
-            # skip seed triangle points
-            if (i == i0 or i == i1 or i == i2): continue
-
-            # find a visible edge on the convex hull using edge hash
-            start = 0
-            key = self._hashKey(x, y)
-
-            for j in range(0,self.hashSize):
-                start = self.hullHash[(key + j) % self.hashSize]
-                if (start != -1 and start != self.hullNext[start]): break
-
-            start = self.hullPrev[start]
-            e = start
-
-            while True:
-                q = self.hullNext[e]
-                if orient(x, y, coords[2 * e], coords[2 * e + 1], coords[2 * q], coords[2 * q + 1]): break
-                e = q
-
-                if (e == start):
-                    e = -1
-                    break
-
-            if (e == -1): continue # likely a near-duplicate point; skip it
-
-            # add the first triangle from the point
-            t = self._addTriangle(e, i, self.hullNext[e], -1, -1, self.hullTri[e])
-
-            # recursively flip triangles from the point until they satisfy the Delaunay condition
-            self.hullTri[i] = self._legalize(t + 2,coords)
-            self.hullTri[e] = t # keep track of boundary triangles on the hull
-            hullSize+=1
-
-            # walk forward through the hull, adding more triangles and flipping recursively
-            n = self.hullNext[e]
-
-            while True:
-                q = self.hullNext[n]
-                if not (orient(x, y, coords[2 * n], coords[2 * n + 1], coords[2 * q], coords[2 * q + 1])): break
-                t = self._addTriangle(n, i, q, self.hullTri[i], -1, self.hullTri[n])
-                self.hullTri[i] = self._legalize(t + 2,coords)
-                self.hullNext[n] = n # mark as removed
-                hullSize-=1
-                n = q
-
-            # walk backward from the other side, adding more triangles and flipping
-            if (e == start):
-                while True:
-                    q = self.hullPrev[e]
-                    if not (orient(x, y, coords[2 * q], coords[2 * q + 1], coords[2 * e], coords[2 * e + 1])): break
-                    t = self._addTriangle(q, i, e, -1, self.hullTri[e], self.hullTri[q])
-                    self._legalize(t + 2,coords)
-                    self.hullTri[q] = t
-                    self.hullNext[e] = e # mark as removed
-                    hullSize-=1
-                    e = q
-
-            # update the hull indices
-            self._hullStart = self.hullPrev[i] = e
-            self.hullNext[e] = self.hullPrev[n] = i
-            self.hullNext[i] = n
-
-            # save the two new edges in the hash table
-            self.hullHash[self._hashKey(x, y)] = i
-            self.hullHash[self._hashKey(coords[2 * e], coords[2 * e + 1])] = e
-
-        self.hull = [None] * hullSize
-        e = self._hullStart
-        for i in range(0,hullSize):
-            self.hull[i] = e
-            e = self.hullNext[e]
-
-        # trim typed triangle mesh arrays
-        self.triangles = self._triangles[0:self.trianglesLen]
-        self.halfedges = self._halfedges[0:self.trianglesLen]
-
-        return self.triangles
-
-    def _hashKey(self,x, y):
-        return math.floor(pseudoAngle(x - self._cx, y - self._cy) * self.hashSize) % self.hashSize
-
-    def _legalize(self,a,coords):
-        i = 0
-        ar = 0
-
-        # recursion eliminated with a fixed-size stack
-        while True:
-            b = self._halfedges[a]
-            """
-              if the pair of triangles doesn't satisfy the Delaunay condition
-              (p1 is inside the circumcircle of [p0, pl, pr]), flip them,
-              then do the same check/flip recursively for the new pair of triangles
-             
-                        pl                    pl
-                       /||\                  /  \
-                    al/ || \bl            al/    \a
-                     /  ||  \              /      \
-                    /  a||b  \    flip    /___ar___\
-                  p0\   ||   /p1   =>   p0\---bl---/p1
-                     \  ||  /              \      /
-                    ar\ || /br             b\    /br
-                       \||/                  \  /
-                        pr                    pr
-             
-            """
-            a0 = a - a % 3
-            ar = a0 + (a + 2) % 3
-
-            if (b == -1): # convex hull edge
-                if (i == 0): break
-                i-=1
-                a = EDGE_STACK[i]
-                continue
-
-            b0 = b - b % 3
-            al = a0 + (a + 1) % 3
-            bl = b0 + (b + 2) % 3
-
-            p0 = self._triangles[ar]
-            pr = self._triangles[a]
-            pl = self._triangles[al]
-            p1 = self._triangles[bl]
-
-            illegal = inCircle(
-                coords[2 * p0], coords[2 * p0 + 1],
-                coords[2 * pr], coords[2 * pr + 1],
-                coords[2 * pl], coords[2 * pl + 1],
-                coords[2 * p1], coords[2 * p1 + 1])
-
-            if (illegal):
-                self._triangles[a] = p1
-                self._triangles[b] = p0
-
-                hbl = self._halfedges[bl]
-
-                # edge swapped on the other side of the hull (rare); fix the halfedge reference
-                if (hbl == -1):
-                    e = self._hullStart
-                    
-                    while True:
-                        if (self.hullTri[e] == bl):
-                            self.hullTri[e] = a
-                            break
-
-                        e = self.hullPrev[e]
-                        if (e == self._hullStart): break
-
-                self._link(a, hbl)
-                self._link(b, self._halfedges[ar])
-                self._link(ar, bl)
-
-                br = b0 + (b + 1) % 3
-
-                # don't worry about hitting the cap: it can only happen on extremely degenerate input
-                if (i < len(EDGE_STACK)):
-                    EDGE_STACK[i] = br
-                    i+=1
-
-            else:
-                if (i == 0): break
-                i-=1
-                a = EDGE_STACK[i]
-
-        return ar
-
-    def _link(self,a, b):
-        self._halfedges[a] = b
-        if (b != -1):
-            self._halfedges[b] = a
-
-    # add a new triangle given vertex indices and adjacent half-edge ids
-    def _addTriangle(self,i0, i1, i2, a, b, c):
-        t = self.trianglesLen
-
-        self._triangles[t] = i0
-        self._triangles[t + 1] = i1
-        self._triangles[t + 2] = i2
-
-        self._link(t, a)
-        self._link(t + 1, b)
-        self._link(t + 2, c)
-
-        self.trianglesLen += 3
-
-        return t
-
-# monotonically increases with real angle, but doesn't need expensive trigonometry
-def pseudoAngle(dx, dy):
-    p = dx / (abs(dx) + abs(dy))
-
-    if (dy > 0):
-        return (3 - p) / 4 # [0..1]
-    else:
-        return (1 + p) / 4 # [0..1]
-
-def dist(ax, ay, bx, by):
-    dx = ax - bx
-    dy = ay - by
-    return dx * dx + dy * dy
-
-# return 2d orientation sign if we're confident in it through J. Shewchuk's error bound check
-def orientIfSure(px, py, rx, ry, qx, qy):
-    l = (ry - py) * (qx - px)
-    r = (rx - px) * (qy - py)
-
-    if (abs(l - r) >= 3.3306690738754716e-16 * abs(l + r)):
-        return l - r
-    else:
-        return 0
-
-# a more robust orientation test that's stable in a given triangle (to fix robustness issues)
-def orient(rx, ry, qx, qy, px, py):
-    return (orientIfSure(px, py, rx, ry, qx, qy) or\
-        orientIfSure(rx, ry, qx, qy, px, py) or\
-        orientIfSure(qx, qy, px, py, rx, ry)) < 0
-
-def inCircle(ax, ay, bx, by, cx, cy, px, py):
-    dx = ax - px
-    dy = ay - py
-    ex = bx - px
-    ey = by - py
-    fx = cx - px
-    fy = cy - py
-
-    ap = dx * dx + dy * dy
-    bp = ex * ex + ey * ey
-    cp = fx * fx + fy * fy
-
-    return dx * (ey * cp - bp * fy) -\
-           dy * (ex * cp - bp * fx) +\
-           ap * (ex * fy - ey * fx) < 0
-
-def circumradius(ax, ay, bx, by, cx, cy):
-    dx = bx - ax
-    dy = by - ay
-    ex = cx - ax
-    ey = cy - ay
-
-    bl = dx * dx + dy * dy
-    cl = ex * ex + ey * ey
-    try:
-        d = 0.5/(dx * ey - dy * ex)
-    except ZeroDivisionError:
-        d = float('inf')
-
-    x = (ey * bl - dy * cl) * d
-    y = (dx * cl - ex * bl) * d
-
-    return x*x + y*y
-
-def circumcenter(ax, ay, bx, by, cx, cy):
-    dx = bx - ax
-    dy = by - ay
-    ex = cx - ax
-    ey = cy - ay
-
-    bl = dx * dx + dy * dy
-    cl = ex * ex + ey * ey
-    try:
-        d = 0.5/(dx * ey - dy * ex)
-    except ZeroDivisionError:
-        d = float('inf')
-
-    x = ax + (ey * bl - dy * cl) * d
-    y = ay + (dx * cl - ex * bl) * d
-
-    return x, y
-
-def quicksort(ids, dists, left, right):
-    if (right - left <= 20):
-        for i in range(left + 1,right+1):
-            temp = ids[i]
-            tempDist = dists[temp]
-            j = i-1
-            while (j >= left and dists[ids[j]] > tempDist):
-                ids[j + 1] = ids[j]
-                j-=1
-            ids[j + 1] = temp;
-
-    else:
-        median = (left + right) >> 1
-        i = left + 1
-        j = right
-        swap(ids, median, i)
-
-        if (dists[ids[left]] > dists[ids[right]]):
-            swap(ids, left, right)
-
-        if (dists[ids[i]] > dists[ids[right]]):
-            swap(ids, i, right)
-
-        if (dists[ids[left]] > dists[ids[i]]):
-            swap(ids, left, i)
-
-        temp = ids[i]
-        tempDist = dists[temp]
-
-        while True:
-            while True:
-                i+=1
-                if (dists[ids[i]] >= tempDist): break
-
-            while True:
-                j-=1
-                if (dists[ids[j]] <= tempDist): break
-
-            if (j < i): break
-            swap(ids, i, j);
-
-        ids[left + 1] = ids[j];
-        ids[j] = temp;
-
-        if (right - i + 1 >= j - left):
-            quicksort(ids, dists, i, right)
-            quicksort(ids, dists, left, j - 1)
-
-        else:
-            quicksort(ids, dists, left, j - 1)
-            quicksort(ids, dists, i, right)
-
-def swap(arr, i, j):
-    tmp = arr[i]
-    arr[i] = arr[j]
-    arr[j] = tmp
-
-
-class height_functions():
-    def flat(location):
-        return 0.0    
-
-    def wavy(location: Vector):
-        from math import sin, cos
-        return -sin(location.x) * cos(location.y) + 1 * sin(location.z) - 2 * cos(location.z)
+def create_building_mat():
+
+    #--------------------------------------------
+    #  Material: Buildings Material 
+    #--------------------------------------------
+
+    mat = bpy.data.materials.new("Buildings Material")
+    mat.use_nodes = True
+    node_tree = mat.node_tree
+    nodes = node_tree.nodes
+    nodes.clear()
+    links = node_tree.links
+
+    node = nodes.new("ShaderNodeNewGeometry")
+    node.location = (-1431.0294189453125, -330.44708251953125)
+
+    node = nodes.new("ShaderNodeSeparateXYZ")
+    node.location = (-1244.4266357421875, -301.31378173828125)
+
+    node = nodes.new("ShaderNodeMath")
+    node.location = (-1043.3829345703125, -216.1114501953125)
+
+    node = nodes.new("ShaderNodeTexCoord")
+    node.location = (-975.1100463867188, 37.48240280151367)
+
+    node = nodes.new("ShaderNodeCombineXYZ")
+    node.location = (-836.08056640625, -283.8024597167969)
+
+    node = nodes.new("ShaderNodeVectorMath")
+    node.location = (-809.06884765625, 33.85584259033203)
+    node.operation = 'MULTIPLY'
+    node.inputs["Vector"].default_value = (0.0, 0.0, 1.0)
+
+    node = nodes.new("ShaderNodeTexChecker")
+    node.location = (-638.6355590820312, 77.3689193725586)
+    node.inputs["Color2"].default_value = (0.09830456972122192, 0.0, 0.010272961109876633, 1.0)
+    node.inputs["Scale"].default_value = 52.70000076293945
+
+    node = nodes.new("ShaderNodeVectorMath")
+    node.location = (-600.3733520507812, -188.1200408935547)
+    node.name = "Vector Math.001"
+    node.operation = 'MULTIPLY'
+    node.inputs["Vector"].default_value = (0.0, 0.0, 1.0)
+    node.inputs["Vector"].default_value = (1.6000003814697266, 0.30000001192092896, 1.0)
+
+    node = nodes.new("ShaderNodeAttribute")
+    node.location = (-485.87030029296875, 275.9276428222656)
+    node.attribute_name = "Col"
+
+    node = nodes.new("ShaderNodeTexBrick")
+    node.location = (-348.505859375, -132.22488403320312)
+    node.show_texture = True
+    node.offset = 0.0
+    node.squash = 0.8999999761581421
+    node.inputs["Color1"].default_value = (1.0, 0.8565634489059448, 0.891800045967102, 1.0)
+    node.inputs["Mortar"].default_value = (0.005384417250752449, 0.0, 0.05494202300906181, 1.0)
+    node.inputs["Scale"].default_value = 12.699999809265137
+    node.inputs["Mortar Size"].default_value = 0.009999999776482582
+
+    node = nodes.new("ShaderNodeMix")
+    node.location = (-158.33932495117188, 272.6905212402344)
+    node.data_type = 'RGBA'
+    node.blend_type = 'MULTIPLY'
+    node.inputs["Factor"].default_value = 0.6600000262260437
+    node.inputs["A"].enabled = True
+    node.inputs["B"].enabled = True
+    node.outputs["Result"].enabled = True
+
+    node = nodes.new("ShaderNodeBsdfPrincipled")
+    node.location = (20.392353057861328, 294.3239440917969)
+
+    node = nodes.new("ShaderNodeOutputMaterial")
+    node.location = (300.0, 300.0)
+
+    #Links
+
+    links.new(
+        nodes["Principled BSDF"].outputs["BSDF"],
+        nodes["Material Output"].inputs["Surface"]
+        )
+
+    links.new(
+        nodes["Texture Coordinate"].outputs["Generated"],
+        nodes["Vector Math"].inputs["Vector"]
+        )
+
+    links.new(
+        nodes["Vector Math"].outputs["Vector"],
+        nodes["Checker Texture"].inputs[0]
+        )
+
+    links.new(
+        nodes["Attribute"].outputs["Color"],
+        nodes["Mix"].inputs["A"]
+        )
+
+    links.new(
+        nodes["Mix"].outputs["Result"],
+        nodes["Principled BSDF"].inputs["Base Color"]
+        )
+
+    links.new(
+        nodes["Geometry"].outputs["Position"],
+        nodes["Separate XYZ"].inputs["Vector"]
+        )
+
+    links.new(
+        nodes["Separate XYZ"].outputs["Z"],
+        nodes["Combine XYZ"].inputs["Z"]
+        )
+
+    links.new(
+        nodes["Separate XYZ"].outputs["Z"],
+        nodes["Combine XYZ"].inputs["Y"]
+        )
+
+#    if bricked:
+    links.new(
+        nodes["Brick Texture"].outputs["Color"],
+        nodes["Mix"].inputs["B"]
+        )
+#    elif checkered:
+#        links.new(
+#            nodes["Checker Texture"].outputs["Color"],
+#            nodes["Mix"].inputs["B"]
+#            )
+
+
+    links.new(
+        nodes["Combine XYZ"].outputs["Vector"],
+        nodes["Vector Math.001"].inputs["Vector"]
+        )
+
+    links.new(
+        nodes["Vector Math.001"].outputs["Vector"],
+        nodes["Brick Texture"].inputs["Vector"]
+        )
+
+    links.new(
+        nodes["Separate XYZ"].outputs["X"],
+        nodes["Math"].inputs[0]
+        )
+
+    links.new(
+        nodes["Separate XYZ"].outputs["Y"],
+        nodes["Math"].inputs[1]
+        )
+
+    links.new(
+        nodes["Math"].outputs["Value"],
+        nodes["Combine XYZ"].inputs["X"]
+        )
+
         
-    # Noisy heights!
-    def noisy_height1(location: Vector):
-        
-        n = noise.noise(location, noise_basis='PERLIN_ORIGINAL')
-        return n
+    return mat
+
+
+def create_terrain_mat():
     
-#    create_terrain(Vector((-4.0, 0.0, 0.0)), 4, 1.0, noisy_height1)
+    import bpy
+    groups = {}  # for node groups
 
-    def noisy_height2(location: Vector):
-        
-        final_noise = 0.0
-        
-        persistence = 0.32
-        P = persistence
-        
-        lacunarity = 2.4
-        L = lacunarity
-        
-        for i in range(5):
-            final_noise += (noise.noise(L * location * 0.75, noise_basis='PERLIN_ORIGINAL')) * P
-            P *= persistence
-            L *= lacunarity
-            
-        return final_noise * 0.4
+    #--------------------------------------------
+    #  Material: Terrain 
+    #--------------------------------------------
 
+    mat = bpy.data.materials.new("Terrain")
+    mat.use_nodes = True
+    node_tree = mat.node_tree
+    nodes = node_tree.nodes
+    nodes.clear()
+    links = node_tree.links
 
-def create_terrain(location, size, feature_scale = 1.0, height_scale = 1.0, horiz_scale = 0.1, height_function = height_functions.flat):
+    node = nodes.new("ShaderNodeNewGeometry")
+    node.location = (-1057.9560546875, 238.4239044189453)
+
+    node = nodes.new("ShaderNodeVectorMath")
+    node.location = (-863.0867309570312, 241.71493530273438)
+    node.operation = 'DISTANCE'
+    node.inputs[1].default_value = (0.0, 0.0, 1.0)
+
+    node = nodes.new("ShaderNodeFloatCurve")
+    node.location = (-692.4407348632812, 304.6192626953125)
+    map = node.mapping
+    for i in range(2):
+        map.curves[0].points.new(0.0, 1.0)
+
+    map.curves[0].points.foreach_set(
+           "location", [
+            0.0, 0.0,
+            0.33090919256210327, 0.029999997466802597,
+            0.7636359930038452, 0.19500000774860382,
+            1.0, 1.0
+            ])
+
+    node = nodes.new("ShaderNodeTexBrick")
+    node.location = (-414.4537658691406, 12.010777473449707)
+    node.show_texture = True
+    node.inputs["Color1"].default_value = (0.800315260887146, 0.05254798382520676, 0.03936794027686119, 1.0) # param brick color
+    node.inputs["Scale"].default_value = 77.79999542236328
+
+    node = nodes.new("ShaderNodeMath")
+    node.location = (-397.08807373046875, 446.94158935546875)
+    node.operation = 'COMPARE'
+    node.use_clamp = True
+    node.inputs[1].default_value = 0.0
+    node.inputs[2].default_value = 0.07000000029802322 # param for path
+
+    node = nodes.new("ShaderNodeMix")
+    node.location = (-394.97613525390625, 257.9634704589844)
+    node.data_type = 'RGBA'
+    node.inputs["A"].default_value = (0.00044031089055351913, 0.09851755946874619, 0.0, 1.0) # grass color
+    node.inputs["B"].default_value = (0.03152122348546982, 0.03152122348546982, 0.03152122348546982, 1.0) # rock color
+
+    node = nodes.new("ShaderNodeMix")
+    node.location = (-185.16549682617188, 358.50408935546875)
+    node.name = "Mix.001"
+    node.data_type = 'RGBA'
+    node.inputs["A"].default_value = (0.00044031089055351913, 0.09851755946874619, 0.0, 1.0) 
+    node.inputs["B"].default_value = (0.3970089554786682, 0.40132981538772583, 0.21035198867321014, 1.0)
+
+    node = nodes.new("ShaderNodeBsdfPrincipled")
+    node.location = (82.87584686279297, 363.02154541015625)
+
+    node = nodes.new("ShaderNodeOutputMaterial")
+    node.location = (372.8758544921875, 363.02154541015625)
+
+    #Links
+
+    links.new(
+        nodes["Principled BSDF"].outputs["BSDF"],
+        nodes["Material Output"].inputs["Surface"]
+        )
+
+    links.new(
+        nodes["Geometry"].outputs["Normal"],
+        nodes["Vector Math"].inputs[0]
+        )
+
+    links.new(
+        nodes["Vector Math"].outputs["Value"],
+        nodes["Float Curve"].inputs["Value"]
+        )
+
+    links.new(
+        nodes["Float Curve"].outputs["Value"],
+        nodes["Math"].inputs["Value"]
+        )
+
+    links.new(
+        nodes["Math"].outputs["Value"],
+        nodes["Mix.001"].inputs["Factor"]
+        )
+
+    links.new(
+        nodes["Float Curve"].outputs["Value"],
+        nodes["Mix"].inputs["Factor"]
+        )
+
+    links.new(
+        nodes["Mix"].outputs["Result"],
+        nodes["Mix.001"].inputs["A"]
+        )
+
+    links.new(
+        nodes["Brick Texture"].outputs["Color"],
+        nodes["Mix.001"].inputs["B"]
+        )
+
+    links.new(
+        nodes["Mix.001"].outputs["Result"],
+        nodes["Principled BSDF"].inputs["Base Color"]
+        )
+        
+    return mat
+
+def flat(location : Vector):
+    return 0.0
+
+def noisy_height2(location: Vector):
+    
+    final_noise = 0.0
+    noise_mag = 1.0
+    
+    persistence = 0.32
+    P = persistence
+    
+    lacunarity = 2.4
+    L = lacunarity
+    
+    for i in range(5):
+        final_noise += (noise.noise(L * location, noise_basis='PERLIN_ORIGINAL')) * P
+        noise_mag += P
+        
+        P *= persistence
+        L *= lacunarity
+        
+    return final_noise / noise_mag
+
+def create_terrain(location, size, feature_scale = 1.0, height_scale = 1.0, horiz_scale = 0.1, height_function = flat):
 
     vertices = []
     triangles = []
@@ -581,7 +348,7 @@ def create_terrain(location, size, feature_scale = 1.0, height_scale = 1.0, hori
             
             x = horiz_scale * i
             y = horiz_scale * j
-            z = height_scale * height_function(0.1 * feature_scale * Vector((x, y, 0.0)))
+            z = height_function(Vector((x, y, 0.0)))
 
             ind = len(vertices)            
             vertices.append(Vector((x, y, z)))
@@ -597,92 +364,12 @@ def create_terrain(location, size, feature_scale = 1.0, height_scale = 1.0, hori
 
     mesh = bpy.data.meshes.new(name="Terrain")
     mesh.from_pydata(vertices, edges, triangles)
-    # useful for development when the mesh may be invalid.
-    # mesh.validate(verbose=True)
+    
     obj = object_data_add(bpy.context, mesh)
     obj.location = location
+    obj.data.materials.append(create_terrain_mat())
     
     return heightmap # return a heightmap here!
-
-
-def spawn_buildings(location, size, building_scale = 1.0, building_height = 1.0):
-    
-    init_verts = []
-    
-    pts = []
-    
-    for i in range(floor(size) + 1):
-        for j in range(floor(size) + 1):
-            
-            pos = Vector((i,j, 0.0))
-            cell = pos + noise.cell_vector(pos)
-            
-            init_verts.append(cell * Vector((1.0, 1.0, 0.0)))
-            
-            pts.append([cell[0], cell[1]])
-        
-    
-    del_tris = Delaunator(pts).triangles
-    
-    triangles = []
-    vertices = []    
-    
-    for i in range(0, len(del_tris), 3):
-        
-        tri = [del_tris[i+k] for k in range(3)]
-        
-        centroid = Vector((0.0, 0.0, 0.0))
-        
-        a = init_verts[tri[0]]
-        b = init_verts[tri[1]]
-        c = init_verts[tri[2]]
-        
-        area = 0.5 * abs(a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y))
-        
-        if area < 0.4:
-            continue
-                        
-        for p in tri:
-            centroid += init_verts[p] / 3
-        
-        if centroid.x > size or centroid.y > size or centroid.x < 0.8 or centroid.y < 0.8:
-            continue
-        
-        new_tri1 = []
-        for p in tri:
-            diff = init_verts[p] - centroid
-            i = len(vertices)
-            
-            vertices.append(centroid + diff * 0.8)
-            new_tri1.append(i)
-            
-        triangles.append(new_tri1)
-        new_tri2 = []
-        
-        for p in tri:
-            diff = init_verts[p] - centroid
-            i = len(vertices)
-            
-            vertices.append(centroid + diff * 0.8 + Vector((0.0, 0.0, building_scale + noise.noise(centroid))))
-            new_tri2.append(i)
-    
-        triangles.append(new_tri2)
-        
-        for index in range(3):
-             
-            nindex = (index + 1) % 3
-            triangles.append([new_tri1[index],  new_tri2[index], new_tri1[nindex]])
-            triangles.append([new_tri1[nindex], new_tri2[index], new_tri2[nindex]])
-        
-    
-    mesh = bpy.data.meshes.new(name="Buildings")
-    mesh.from_pydata(vertices, [], triangles)
-    # useful for development when the mesh may be invalid.
-    # mesh.validate(verbose=True)
-    obj = object_data_add(bpy.context, mesh)
-    obj.location = location
-    
-    return mesh
 
 def get_buildings(location, size, building_scale = 1.0, building_height = 1.0):
     
@@ -759,21 +446,8 @@ def get_buildings(location, size, building_scale = 1.0, building_height = 1.0):
     
     return buildings
 
-def barycentric(input : list, triangle : list):
-    
-    # all vector3, ignor3e z coordinate
-    inx, iny = input
-    
-    xa, ya = triangle[0]
-    xb, yb = triangle[1]
-    xc, yc = triangle[2]
-    A = (xb - xa) * (yc - ya) - (yb - ya) * (xc - xa)
-    
-    beta = ((xa - xc) * (iny - yc) - (ya - yc) * (inx - xc)) / A
-    gamma = ((xb - xa) * (iny - ya) - (yb - ya) * (inx - xa)) / A
-    alpha = 1 - beta - gamma
-    
-    return alpha, beta, gamma
+
+
 
 def register():
 
@@ -790,44 +464,7 @@ def register():
 #    print(cells)
     
     def terrain(location):
-        return height_functions.noisy_height2(location)
-    
-    def street_func(location, metric="DISTANCE"):
-        distances, cells = noise.voronoi(location, distance_metric=metric)
-        
-#        edge = [cells[0], cells[1]] # delaunay edge!
-#        
-#        numerator =  (edge[1].x - edge[0].x) * (location.y - edge[0].y) - \
-#                     (location.x - edge[0].x) * (edge[1].y - edge[0].y)
-#        denominator = sqrt((edge[1].x - edge[0].x) ** 2 + (edge[1].y - edge[0].y) ** 2)
-#        
-#        dist = numerator / denominator
-        
-        EPS1 = 0.1
-        EPS2 = 0.2
-        
-#
-        height = 0.0
-        
-        # big blocks
-        if distances[1] - distances[0] > EPS1:
-            height += 1.0
-        
-        # plazas?
-#        if distances[2] - distances[0] > EPS2:
-#            height -= 1.0
-        
-        return max(0.0, height)
-    
-    def combined_function(location):
-        
-        c = combined(location)
-        
-        return terrain(location) + 0.02 * street_func(25.0 * location) * (1.0 - c)
-        
-#    def new_func(location):
-#        
-#        return street_func(location) * street_func(5 * location, metric="MANHATTAN")
+        return VERT_SCALE * noisy_height2(FT_SCALE * HORIZ_SCALE * location)
     
     def gradient_plot(location):
         
@@ -842,51 +479,70 @@ def register():
         
         return 0.0
     
-    
-    builds = buildings(LOC, SIZE * HORIZ_SCALE)
-    
-    def add_buildings(input_buildings):
+    def add_buildings(location, input_buildings, height_function):
     
         triangles = []
         vertices = []
     
         for building in input_buildings:
-                
+                            
             verts = building[0]
             tris = building[1]
                 
             centroid = Vector((0.0, 0.0, 0.0))
         
-            for p in tris[:3]:
+            for p in tris[0]:
                 centroid += verts[p] / 3
 
             eps = Vector((0.05, 0.0, 0.0))
                         
-            ground_height = terrain(centroid)
+            ground_height = height_function(centroid)
             
-            gradient = Vector((terrain(centroid + eps.xyy) - ground_height,
-                               terrain(centroid + eps.yxy) - ground_height, 0.0)) / eps.x
+            gradient = Vector((height_function(centroid + eps.xyy) - ground_height,
+                               height_function(centroid + eps.yxy) - ground_height, 0.0)) / eps.x
             
-            if gradient.length <= 0.25:
+#            print(verts)
+            
+            if gradient.length <= 0.3:
                 
                 # spawn the actual building
                 ind = len(vertices)
                 triangles += [[ind + k for k in tri] for tri in tris]
-                vertices += verts
+                vertices += [v + Vector((0,0,ground_height)) for v in verts]
             
+                
         mesh = bpy.data.meshes.new(name="Buildings")
         mesh.from_pydata(vertices, [], triangles)
         
+        if not mesh.vertex_colors:
+            mesh.vertex_colors.new()
+        
+        print(len(triangles))
+        
+#        for building in input_buildings:
+        for i in range(0, len(triangles), 8):
+            r, g, b = [random.random() for _k in range(3)]
+            
+            for j in range(3*8):
+                mesh.vertex_colors.active.data[3*i+j].color = (r, g, b, 1.0)
+
         
         # useful for development when the mesh may be invalid.
         # mesh.validate(verbose=True)
         obj = object_data_add(bpy.context, mesh)
-        # obj.location = location
+        obj.data.materials.append(create_building_mat())
+        
+#        bpy.ops.object.mode_set(mode='VERTEX_PAINT')
+        obj.location = location
         
         return mesh
-
 #       
-    heightmap = create_terrain(LOC, SIZE, FT_SCALE, VERT_SCALE, HORIZ_SCALE, height_functions.noisy_height2)
+    heightmap = create_terrain(LOC, SIZE, FT_SCALE, VERT_SCALE, HORIZ_SCALE, terrain)
+    
+    builds = get_buildings(LOC, SIZE * HORIZ_SCALE)
+    
+    add_buildings(LOC, builds, terrain)
+    
 
 #    create_terrain(LOC, SIZE, FT_SCALE, VERT_SCALE, HORIZ_SCALE, combined)
     
@@ -896,7 +552,7 @@ def register():
 #    create_terrain(LOC + Vector((SIZE * HORIZ_SCALE, 0.0, 0.0)), SIZE, 25.0 * FT_SCALE, VERT_SCALE, HORIZ_SCALE, street_func)
     
     
-# triangle = [[k.x, k.y] for k in cells[:3]]
+#   triangle = [[k.x, k.y] for k in cells[:3]]
         
 #        triangle = [[0.0, 0.0], [2.0, 2.0], [0.0, 1.0]]
 #        a, b, g = barycentric([location.x, location.y], triangle)

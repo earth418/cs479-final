@@ -383,7 +383,7 @@ def dist(ax, ay, bx, by):
     dx = ax - bx
     dy = ay - by
     return dx * dx + dy * dy
-
+    
 # return 2d orientation sign if we're confident in it through J. Shewchuk's error bound check
 def orientIfSure(px, py, rx, ry, qx, qy):
     l = (ry - py) * (qx - px)
