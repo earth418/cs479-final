@@ -197,7 +197,7 @@ def create_building_mat(building_type):
         
     return mat
 
-def create_terrain_mat(bricks, brick_threshold):
+def create_terrain_mat(bricks, brick_threshold, brick_scale, brick_color):
     
     #--------------------------------------------
     #  Material: Terrain 
@@ -235,8 +235,8 @@ def create_terrain_mat(bricks, brick_threshold):
     node = nodes.new("ShaderNodeTexBrick")
     node.location = (-414.4537658691406, 12.010777473449707)
     node.show_texture = True
-    node.inputs["Color1"].default_value = (0.800315260887146, 0.05254798382520676, 0.03936794027686119, 1.0) # param brick color
-    node.inputs["Scale"].default_value = 77.79999542236328
+    node.inputs["Color1"].default_value = (brick_color.r, brick_color.g, brick_color.b, 1.0) # param brick color
+    node.inputs["Scale"].default_value = 50 * brick_scale
 
     node = nodes.new("ShaderNodeMath")
     node.location = (-397.08807373046875, 446.94158935546875)
@@ -529,7 +529,7 @@ def initialize_body(name, position, velocity, size, type):
     bpy.ops.object.shade_smooth()
     return bpy.context.object
     
-def generate_terrain(size, horiz_scale, height_function, bricks, brick_threshold):
+def generate_terrain(size, horiz_scale, height_function, bricks, brick_threshold, brick_scale, brick_color):
 
     vertices = []
     triangles = []
@@ -563,7 +563,7 @@ def generate_terrain(size, horiz_scale, height_function, bricks, brick_threshold
     mesh.from_pydata(vertices, edges, triangles)
     
     obj = object_data_add(bpy.context, mesh)
-    obj.data.materials.append(create_terrain_mat(bricks, brick_threshold))
+    obj.data.materials.append(create_terrain_mat(bricks, brick_threshold, brick_scale, brick_color))
     
     return heightmap # return a heightmap here!
     
@@ -861,7 +861,7 @@ def create_trees(self, context):
             
             if gradient.length >= 0.25 and gradient.length <= 0.75:
                 loc += Vector((random.random(), random.random(), 0.0))
-                loc.z = height_func(loc)
+                loc.z = height_func(loc) + 0.47
                 last_tree = spawn_one_tree(loc, last_tree)
         
 def create_terrain(self, context):
@@ -875,7 +875,8 @@ def create_terrain(self, context):
     
     height_func = terrain if self.include_terrain else flat
     
-    generate_terrain(self.scale, self.horiz_scale, height_func, self.brick_ground, self.brick_ground_threshold)
+    generate_terrain(self.scale, self.horiz_scale, height_func, self.brick_ground,
+                     self.brick_ground_threshold, self.brick_ground_scale, self.brick_ground_color)
 
 def create_buildings(self, context):
     
@@ -895,7 +896,7 @@ def create_buildings(self, context):
 
 def add_city(self, context):
     if self.include_birds:
-        bpy.ops.import_scene.fbx(filepath=dirp+"/bird.fbx")
+        bpy.ops.import_scene.fbx(filepath=dirp + os.sep + 'bird.fbx')
         create_boids(self, context)
         clear_bird_fbx()
         
@@ -954,7 +955,7 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
     tree_density: FloatProperty(
         name='Tree Density',
         description='How many trees per unit area',
-        default=1.0,
+        default=1.5,
         soft_min=0.05,
         soft_max=5.0,
     )
@@ -970,14 +971,14 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
     cloudiness: IntProperty(
         name='Cloudiness',
         description='Cloudiness',
-        default=150,
+        default=25,
         min=1,
     )
     
     min_cloud_radius: FloatProperty(
         name='Min Radius',
         description='Minimum Radius of Cloud Tuft',
-        default=2,
+        default=1,
         soft_min=0,
         soft_max=4,
     )
@@ -985,7 +986,7 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
     max_cloud_radius: FloatProperty(
         name='Max Radius',
         description='Maximum Radius of Cloud Tuft',
-        default=4,
+        default=3,
         soft_min=2,
         soft_max=6,
     )
@@ -993,7 +994,7 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
     cloud_height: FloatProperty(
         name='Altitude',
         description='Altitude',
-        default=15,
+        default=3,
         soft_min=0,
         soft_max=100,
     )
@@ -1001,7 +1002,7 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
     cloud_density: FloatProperty(
         name='Density',
         description='Cloud Density',
-        default=0.5,
+        default=0.75,
         min=0,
         max=1,
     )
@@ -1009,7 +1010,7 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
     cloud_depth: FloatProperty(
         name='Domain Depth',
         description='Depth of Cloud Domain',
-        default=4,
+        default=2,
         soft_min=0,
         soft_max=8,
     )
@@ -1031,7 +1032,7 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
     num_boids: IntProperty(
         name='Number of Birds',
         description='Number of Birds',
-        default=150,
+        default=20,
         min=1,
         soft_max=200,
     )
@@ -1055,8 +1056,8 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
     friend_radius: FloatProperty(
         name='Friend Radius',
         description='Friend Radius',
-        default=3,
-        soft_min=1,
+        default=1,
+        soft_min=0.01,
         soft_max=5,
     )
     
@@ -1079,20 +1080,20 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
     include_birds: BoolProperty(
         name='Add Birds?',
         description='Add Birds?',
-        default=False,
+        default=True,
     )
     
     min_bird_altitude: FloatProperty(
         name='Min Altitude',
         description='Min Altitude',
-        default=10,
+        default=1,
         soft_min=0,
     )
     
     max_bird_altitude: FloatProperty(
         name='Max Altitude',
         description='Max Altitude',
-        default=20,
+        default=5,
         soft_min=0,
     )
     
@@ -1137,7 +1138,7 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
     noise_scale: FloatProperty(
         name='Noise Scale',
         description='How clustered together noise features are on the terrain',
-        default=0.1,
+        default=0.075,
         soft_min=0.005,
         soft_max=5.0,
     )
@@ -1210,7 +1211,9 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
         description='Color of buildings',
         subtype="COLOR",
         size=3,
+        soft_min=0.0,
         default=(0.0, 0.0, 0.0),
+        soft_max=1.0,
     )
     
     one_color_buildings: BoolProperty(
@@ -1220,27 +1223,31 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
     )
     
     brick_ground: BoolProperty(
-        name='Brick ground',
+        name='Brick Ground',
         description='Whether or not the ground should be painted with brick',
         default=False
     )
     
-    brick_ground_scale: BoolProperty(
-        name='Brick ground scale',
-        description='Size of bricks',
-        default=False
+    brick_ground_scale: FloatProperty(
+        name='Brick Detail',
+        description='Brick Detail',
+        default=0.5,
+        min=0.1,
+        soft_max=1,
     )
     
     brick_ground_color: FloatVectorProperty(
-        name='Brick ground color',
-        description='Color of brick ground',
+        name='Brick Ground Color',
+        description='Color of Brick Ground',
         subtype="COLOR",
         size=3,
+        soft_min=0.0,
         default=(0.0, 0.0, 0.0),
+        soft_max=1.0,
     )
     
     brick_ground_threshold : FloatProperty(
-        name='Brick ground threshold',
+        name='Brick Ground Threshold',
         description='How much brick should there be',
         default=0.6,
         soft_min=0.01,
