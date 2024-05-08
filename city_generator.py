@@ -760,7 +760,7 @@ def create_boids(self, context):
         b.animation_data_create()
         b.animation_data.action = bpy.data.actions.new(name="Flight")
 
-    for t in range(60):
+    for t in range(self.boid_preflocking):
         for i in range(self.num_boids):
             brains[i].fly(brains, obstacles)
 
@@ -848,7 +848,7 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
     cloudiness: IntProperty(
         name='Cloudiness',
         description='Cloudiness',
-        default=100,
+        default=150,
         min=1,
     )
     
@@ -978,6 +978,14 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
         name='Bird Type',
         items=bird_types,
         default='0',
+    )
+    
+    boid_preflocking: EnumProperty(
+        name='Preflocking',
+        description="Let birds flock before animation for X frames",
+        default=120,
+        min=0,
+        soft_max=240,
     )
     
     # TERRAIN AND BUILDINGS
@@ -1190,6 +1198,9 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
                 
                 row = box.row()
                 row.prop(self, 'max_bird_altitude')
+                
+                row = box.row()
+                row.prop(self, 'boid_preflocking')
 
     def execute(self, context):
 
