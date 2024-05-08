@@ -33,6 +33,9 @@ settings = [('0', 'Universal', 'Universal'),
             
 bird_types = [('0', 'Bird', 'Bird'),
               ('1', 'Cone', 'Cone')]
+              
+flock_methods = [('0', 'Weighted Average', 'Weighted Average'),
+                  ('1', 'Priority Arbitration', 'Priority Arbitration')]
 
 building_types = [('0', 'Solid', 'Solid'),
                   ('1', 'Brick', 'Brick'),
@@ -352,7 +355,7 @@ class Obstacle:
         self.radius = r
 
 class Boid:
-    def __init__(self, pos, vel, scale, min_height, max_height, friend_r, avoid_r, max_a, max_s):
+    def __init__(self, pos, vel, scale, min_height, max_height, friend_r, avoid_r, max_a, max_s, fm):
         self.position = pos
         self.velocity = vel
         self.flockmates = []
@@ -364,6 +367,7 @@ class Boid:
         self.avoid_radius = avoid_r
         self.max_acceleration = max_a
         self.max_speed = max_s
+        self.flock_method = fm
         
     def fly(self, boids, obstacles):
         self.increment()
@@ -396,26 +400,24 @@ class Boid:
         collision = self.getAvoidBoids() + self.getAvoidBorders() + self.getAvoidObstacles(obstacles) * 3
         align = self.getAverageVelocity()
         cohese = self.getCohesion()
-        noise = np.array([uniform(-1,1), uniform(-1,1), uniform(-1,1)]) * 0.1 if len(self.flockmates) > 1 else np.zeros(3)
         
-        self.velocity = sum([self.velocity, align, collision, cohese, noise])
-        
-        '''
-        # PRIORITIZED ACCELERATION ARBITRATION
-        avoid_magnitude = np.linalg.norm(collision)
-        if avoid_magnitude > self.max_acceleration:
-            self.velocity = sum([self.velocity, clamp_magnitude(collision, self.max_acceleration)])
+        if self.flock_method == '0':
+            self.velocity = sum([self.velocity, align/3, collision/3, cohese/3])
         else:
-            align_magnitude = np.linalg.norm(align)
-            if avoid_magnitude + align_magnitude > self.max_acceleration:
-                self.velocity = sum([self.velocity, collision, clamp_magnitude(align, self.max_acceleration - avoid_magnitude)])
+            # PRIORITIZED ACCELERATION ARBITRATION
+            avoid_magnitude = np.linalg.norm(collision)
+            if avoid_magnitude > self.max_acceleration:
+                self.velocity = sum([self.velocity, clamp_magnitude(collision, self.max_acceleration)])
             else:
-                cohese_magnitude = np.linalg.norm(cohese)
-                if avoid_magnitude + align_magnitude + cohese_magnitude > self.max_acceleration:
-                    self.velocity = sum([self.velocity, collision, align, clamp_magnitude(cohese, self.max_acceleration - avoid_magnitude - align_magnitude)])
+                align_magnitude = np.linalg.norm(align)
+                if avoid_magnitude + align_magnitude > self.max_acceleration:
+                    self.velocity = sum([self.velocity, collision, clamp_magnitude(align, self.max_acceleration - avoid_magnitude)])
                 else:
-                    self.velocity = sum([self.velocity, collision, align, cohese])
-        '''
+                    cohese_magnitude = np.linalg.norm(cohese)
+                    if avoid_magnitude + align_magnitude + cohese_magnitude > self.max_acceleration:
+                        self.velocity = sum([self.velocity, collision, align, clamp_magnitude(cohese, self.max_acceleration - avoid_magnitude - align_magnitude)])
+                    else:
+                        self.velocity = sum([self.velocity, collision, align, cohese])
         
         # Check speed
         speed = np.linalg.norm(self.velocity)
@@ -755,7 +757,7 @@ def create_boids(self, context):
         b = initialize_body("Boid " + str(i+1), p, v, self.boid_size, self.bird_type)
     
         bodies.append(b)
-        brains.append(Boid(p, v, NEW_SCALE, self.min_bird_altitude, self.max_bird_altitude, self.friend_radius, self.avoid_radius, MAX_ACCELERATION, self.max_speed))
+        brains.append(Boid(p, v, NEW_SCALE, self.min_bird_altitude, self.max_bird_altitude, self.friend_radius, self.avoid_radius, MAX_ACCELERATION, self.max_speed, self.flock_method))
         
         b.animation_data_create()
         b.animation_data.action = bpy.data.actions.new(name="Flight")
@@ -909,7 +911,7 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
     num_boids: IntProperty(
         name='Number of Birds',
         description='Number of Birds',
-        default=100,
+        default=150,
         min=1,
         soft_max=200,
     )
@@ -933,7 +935,7 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
     friend_radius: FloatProperty(
         name='Friend Radius',
         description='Friend Radius',
-        default=2,
+        default=3,
         soft_min=1,
         soft_max=5,
     )
@@ -986,6 +988,12 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
         default=120,
         min=0,
         soft_max=240,
+    )
+    
+    flock_method: EnumProperty(
+        name='Flocking Method',
+        items=flock_methods,
+        default='0',
     )
     
     # TERRAIN AND BUILDINGS
@@ -1183,6 +1191,9 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
             
                 row = box.row()
                 row.prop(self, 'boid_size')
+                
+                row = box.row()
+                row.prop(self, 'flock_method')
             
                 row = box.row()
                 row.prop(self, 'max_speed')
