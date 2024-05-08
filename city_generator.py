@@ -980,7 +980,7 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
         default='0',
     )
     
-    boid_preflocking: EnumProperty(
+    boid_preflocking: IntProperty(
         name='Preflocking',
         description="Let birds flock before animation for X frames",
         default=120,
