@@ -783,7 +783,6 @@ def create_boids(self, context):
     obstacles = []
     
     NEW_SCALE = self.scale / 10
-    MAX_ACCELERATION = 0.5
     
     for i in range(self.num_boids):
         p = np.array([uniform(0, NEW_SCALE), uniform(0, NEW_SCALE), uniform(self.min_bird_altitude, self.max_bird_altitude)])
@@ -792,7 +791,7 @@ def create_boids(self, context):
         b = initialize_body("Boid " + str(i+1), p, v, self.boid_size, self.bird_type)
     
         bodies.append(b)
-        brains.append(Boid(p, v, NEW_SCALE, self.min_bird_altitude, self.max_bird_altitude, self.friend_radius, self.avoid_radius, MAX_ACCELERATION, self.max_speed, self.flock_method))
+        brains.append(Boid(p, v, NEW_SCALE, self.min_bird_altitude, self.max_bird_altitude, self.friend_radius, self.avoid_radius, self.max_acceleration, self.max_speed, self.flock_method))
         
         b.animation_data_create()
         b.animation_data.action = bpy.data.actions.new(name="Flight")
@@ -1049,6 +1048,14 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
         name='Max Speed',
         description='Max Speed',
         default=0.15,
+        soft_min=0.01,
+        soft_max=1,
+    )
+    
+    max_acceleration: FloatProperty(
+        name='Max Acceleration',
+        description='Max Acceleration',
+        default=0.5,
         soft_min=0.01,
         soft_max=1,
     )
@@ -1403,6 +1410,10 @@ class OBJECT_OT_add_city(Operator, AddObjectHelper):
             
                 row = box.row()
                 row.prop(self, 'max_speed')
+                
+                if self.flock_method == '1':
+                    row = box.row()
+                    row.prop(self, 'max_acceleration')
             
                 row = box.row()
                 row.prop(self, 'friend_radius')
